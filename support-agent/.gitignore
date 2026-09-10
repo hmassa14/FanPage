@@ -9,6 +9,7 @@ data/support_agent.sqlite3*
 data/inbox/
 data/outbox/
 evals/report.json
+evals/report.md
 evals/.eval_sent/
 htmlcov/
 .coverage

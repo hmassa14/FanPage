@@ -1,6 +1,6 @@
 # Policy gates. Version this file; the version string is stored on every gate decision so
 # you can answer "which rules were in force when this reply went out?" months later.
-version: "2026-09-10.1"
+version: "2026-09-10.2"
 
 auto_send:
   # Only these categories may go out without a human. Everything else needs approval.
@@ -16,6 +16,8 @@ auto_send:
   require_kb_citation: true
   max_reply_words: 350
   max_urgency: high            # critical always needs a human
+  # A reply that tells the customer "no" is reviewed by a person before it goes out.
+  review_declines: true
 
 escalate:
   categories:
@@ -52,6 +54,8 @@ reject:
 
 actions:
   # Side effects the reply may promise. Anything not listed here is blocked.
+  # A refund can never exceed the order total the research stage established.
+  refund_must_not_exceed_order_total: true
   auto_approve:
     issue_refund:
       max_amount_usd: 50.00
@@ -63,6 +67,15 @@ actions:
     - update_shipping_address
 
 content:
+  # Instruction-injection tripwires. A hit never auto-sends; it goes to a human (block, not
+  # escalate) so the reviewer sees what the email tried to do.
+  injection_patterns:
+    - '\bignore (all |any |the |your )?(previous|prior|above|earlier) (instructions|rules|policy|policies)\b'
+    - '\bsystem prompt\b'
+    - '\byou are (now )?authori[sz]ed to\b'
+    - '\bas an ai\b'
+    - '\b(override|disregard) (the |your )?(policy|policies|rules|limits?)\b'
+    - '\[\[?\s*(system|assistant|instruction)s?\s*:'
   # Phrases that must never appear in an outbound reply. Matched case-insensitively.
   banned_phrases:
     - "our fault"

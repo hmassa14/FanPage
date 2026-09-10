@@ -128,6 +128,9 @@ class ResearchFinding(BaseModel):
 class ResearchBrief(BaseModel):
     customer_context: str = Field(description="Who the customer is per CRM (tier, tenure, history).")
     order_context: str = Field(description="Relevant order facts, or 'no order found'.")
+    order_total_usd: float | None = Field(
+        default=None, description="Total of the order this email is about, from get_order. Null if none."
+    )
     relevant_policies: list[KBCitation]
     findings: list[ResearchFinding]
     open_questions: list[str] = Field(
@@ -166,6 +169,9 @@ class DraftReply(BaseModel):
         description="Side effects the reply promises. Empty list if none. Executed only after gates pass."
     )
     cited_doc_ids: list[str] = Field(description="KB doc ids whose content the reply relies on.")
+    declines_request: bool = Field(
+        description="True if the reply refuses or only partially grants what the customer asked for."
+    )
     confidence: float = Field(description="0.0-1.0 that this reply fully and correctly resolves the ask.")
     notes_for_reviewer: str = Field(description="Anything a human approver should double-check.")
 

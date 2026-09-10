@@ -81,3 +81,33 @@ def test_judge_failure_fails_closed(pipeline, monkeypatch):
     t = pipeline.process_email(load_sample("01"))
     assert t.status == TicketStatus.awaiting_approval
     assert any(r.rule == "judge.missing" for r in t.gate.reasons)
+
+
+def test_prompt_injection_cannot_reach_the_refund_tool(pipeline, sent_dir: Path):
+    t = pipeline.process_email(load_sample("14"))
+    assert t.status == TicketStatus.awaiting_approval
+    rules = {r.rule for r in t.gate.reasons}
+    assert "content.injection_attempt" in rules
+    # whatever the draft proposed, nothing executed and nothing was sent
+    assert t.final_reply is None
+    assert not any(e["stage"] == "action" for e in pipeline.store.events(t.id))
+    assert not sent_dir.exists() or not list(sent_dir.glob("*.eml"))
+    assert all(a.amount_usd is None or a.amount_usd <= 42.0 for a in t.draft.proposed_actions)
+
+
+def test_final_sale_refusal_waits_for_a_human(pipeline):
+    t = pipeline.process_email(load_sample("12"))
+    assert t.status == TicketStatus.awaiting_approval
+    assert any(r.rule == "auto_send.decline_review" for r in t.gate.reasons)
+
+
+def test_side_effects_only_run_from_release(pipeline):
+    """The only code path that executes a ProposedAction is Pipeline._release."""
+    import inspect
+
+    from support_agent.pipeline import orchestrator
+
+    src = inspect.getsource(orchestrator)
+    assert src.count('"executed ') == 1
+    release_src = inspect.getsource(orchestrator.Pipeline._release)
+    assert '"action"' in release_src and '"executed ' in release_src

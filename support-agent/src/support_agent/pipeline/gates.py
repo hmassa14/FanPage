@@ -40,17 +40,18 @@ class Policy:
     version: str
     raw: dict[str, Any]
     escalate_patterns: list[re.Pattern[str]] = field(default_factory=list)
+    injection_patterns: list[re.Pattern[str]] = field(default_factory=list)
 
     @classmethod
     def load(cls, path: Path) -> Policy:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-        pats = [re.compile(p, re.IGNORECASE) for p in raw.get("escalate", {}).get("keywords", [])]
-        return cls(version=str(raw["version"]), raw=raw, escalate_patterns=pats)
+        return cls.from_dict(raw)
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Policy:
-        pats = [re.compile(p, re.IGNORECASE) for p in raw.get("escalate", {}).get("keywords", [])]
-        return cls(version=str(raw["version"]), raw=raw, escalate_patterns=pats)
+        esc = [re.compile(p, re.IGNORECASE) for p in raw.get("escalate", {}).get("keywords", [])]
+        inj = [re.compile(p, re.IGNORECASE) for p in (raw.get("content") or {}).get("injection_patterns", [])]
+        return cls(version=str(raw["version"]), raw=raw, escalate_patterns=esc, injection_patterns=inj)
 
     def section(self, name: str) -> dict[str, Any]:
         return self.raw.get(name) or {}
@@ -156,6 +157,8 @@ def evaluate(
         block("auto_send.urgency", f"urgency={triage.urgency.value} > {max_urg}")
     if auto.get("require_kb_citation") and not draft.cited_doc_ids:
         block("auto_send.citation", "reply cites no knowledge-base document")
+    if auto.get("review_declines") and draft.declines_request:
+        block("auto_send.decline_review", "reply declines the customer's request; a person reviews refusals")
     if brief.open_questions and draft.proposed_actions:
         block("auto_send.open_questions", "brief has open questions but draft promises actions")
     words = len(draft.body.split())
@@ -179,6 +182,11 @@ def evaluate(
     # content rules
     if content.get("block_if_contains_placeholder", True) and contains_placeholder(draft.body):
         block("content.placeholder_leak", "reply contains a redaction placeholder")
+    for pat in policy.injection_patterns:
+        m = pat.search(haystack)
+        if m:
+            block("content.injection_attempt", f"email matched {pat.pattern!r}: '{m.group(0)}'")
+            break
     lowered = draft.body.lower()
     for phrase in content.get("banned_phrases", []):
         if phrase.lower() in lowered:
@@ -198,6 +206,18 @@ def evaluate(
         rule = auto_ok.get(a.type.value)
         if rule is None:
             block("actions.not_allowlisted", f"{a.type.value} is not auto-approvable")
+            continue
+        if (
+            a.type == ActionType.issue_refund
+            and actions_cfg.get("refund_must_not_exceed_order_total")
+            and a.amount_usd is not None
+            and brief.order_total_usd is not None
+            and a.amount_usd > brief.order_total_usd + 0.005
+        ):
+            block(
+                "actions.exceeds_order_total",
+                f"refund ${a.amount_usd:.2f} > order total ${brief.order_total_usd:.2f}",
+            )
             continue
         cap = rule.get("max_amount_usd") if isinstance(rule, dict) else None
         if cap is not None:
