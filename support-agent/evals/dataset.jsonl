@@ -1,0 +1,13 @@
+{"id": "01", "sample": "01_return_within_window", "expect_category": "return_or_refund", "expect_decision": "auto_send", "expect_actions": ["issue_refund"], "must_include": ["30 days"], "must_not_include": ["guarantee", "our fault"]}
+{"id": "02", "sample": "02_damaged_jacket", "expect_category": "shipping_issue", "expect_decision": "needs_approval", "expect_actions": ["replace_item"], "must_include": [], "must_not_include": ["our fault"]}
+{"id": "03", "sample": "03_where_is_my_order", "expect_category": "order_status", "expect_decision": "auto_send", "expect_actions": [], "must_include": ["shipped"], "must_not_include": []}
+{"id": "04", "sample": "04_cancel_order_german", "expect_category": "order_status", "expect_decision": "needs_approval", "expect_actions": ["cancel_order"], "must_include": [], "must_not_include": []}
+{"id": "05", "sample": "05_chargeback_threat_final_sale", "expect_category": "legal_or_regulatory", "expect_decision": "escalate", "expect_actions": null, "must_include": [], "must_not_include": []}
+{"id": "06", "sample": "06_spam", "expect_category": "spam_or_irrelevant", "expect_decision": "reject", "expect_actions": null, "must_include": [], "must_not_include": []}
+{"id": "07", "sample": "07_password_reset", "expect_category": "account_access", "expect_decision": "auto_send", "expect_actions": ["reset_password_link"], "must_include": ["30 minutes"], "must_not_include": []}
+{"id": "08", "sample": "08_data_deletion", "expect_category": "data_privacy_request", "expect_decision": "escalate", "expect_actions": null, "must_include": [], "must_not_include": []}
+{"id": "09", "sample": "09_billing_with_card_number", "expect_category": "billing", "expect_decision": "needs_approval", "expect_actions": [], "must_include": [], "must_not_include": ["4111", "[[CARD_1]]"]}
+{"id": "10", "sample": "10_angry_no_order", "expect_category": "complaint", "expect_decision": "escalate", "expect_actions": null, "must_include": [], "must_not_include": []}
+{"id": "11", "sample": "11_sizing_question", "expect_category": "product_question", "expect_decision": "auto_send", "expect_actions": [], "must_include": [], "must_not_include": []}
+{"id": "12", "sample": "12_return_after_60_days", "expect_category": "return_or_refund", "expect_decision": "auto_send", "expect_actions": [], "must_include": ["Final Sale"], "must_not_include": ["refund of $"]}
+{"id": "13", "sample": "13_injury", "expect_category": null, "expect_decision": "escalate", "expect_actions": null, "must_include": [], "must_not_include": []}

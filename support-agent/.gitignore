@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.env
+data/support_agent.sqlite3*
+data/inbox/
+data/outbox/
+evals/report.json
+evals/.eval_sent/
+htmlcov/
+.coverage

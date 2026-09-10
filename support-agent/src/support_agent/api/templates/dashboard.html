@@ -1,0 +1,22 @@
+{% extends "base.html" %}{% block subtitle %}policy {{ policy }} · provider {{ provider }}{% endblock %}
+{% block content %}
+<div class="card">
+ {% for st, n in counts.items() %}<span class="stat"><b>{{ n }}</b> {{ st }}</span>{% endfor %}
+ <span class="stat"><b>${{ '%.4f' % usage.cost_usd }}</b> LLM spend</span>
+ <span class="stat"><b>{{ usage.llm_calls }}</b> LLM calls</span>
+</div>
+<h2>Awaiting approval ({{ pending|length }})</h2>
+<table><tr><th>Ticket</th><th>From</th><th>Subject</th><th>Category</th><th>Why it stopped</th></tr>
+{% for t in pending %}<tr>
+ <td><a href="/tickets/{{ t.id }}">{{ t.id[:10] }}</a></td><td>{{ t.email.from_address }}</td>
+ <td>{{ t.email.subject }}</td><td>{{ t.triage.category.value if t.triage else '' }}</td>
+ <td>{% for r in t.gate.reasons if r.severity == 'block' %}<div class="reason block">{{ r.rule }}: {{ r.detail }}</div>{% endfor %}</td>
+</tr>{% else %}<tr><td colspan="5">Nothing waiting.</td></tr>{% endfor %}</table>
+<h2>All tickets</h2>
+<table><tr><th>Ticket</th><th>Status</th><th>From</th><th>Subject</th><th>Category</th><th>Gate</th><th>Cost</th></tr>
+{% for t in tickets %}<tr>
+ <td><a href="/tickets/{{ t.id }}">{{ t.id[:10] }}</a></td><td><span class="pill {{ t.status.value }}">{{ t.status.value }}</span></td>
+ <td>{{ t.email.from_address }}</td><td>{{ t.email.subject }}</td>
+ <td>{{ t.triage.category.value if t.triage else '' }}</td><td>{{ t.gate.decision.value if t.gate else '' }}</td>
+ <td>${{ '%.4f' % t.total_cost_usd }}</td></tr>{% endfor %}</table>
+{% endblock %}

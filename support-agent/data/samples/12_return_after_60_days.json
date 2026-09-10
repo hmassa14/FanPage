@@ -1,0 +1,1 @@
+{"message_id": "<sample-12@customer.example>", "from_address": "jordan.reyes@example.com", "from_name": "Jordan Reyes", "to_address": "support@northwind-outfitters.example", "subject": "Return NW-10099", "body_text": "Hi, I'd like to return the tent footprint from order NW-10099 for a refund. It's unused.\n\nThanks", "received_at": "2026-09-10T15:30:00Z"}

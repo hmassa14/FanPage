@@ -1,0 +1,7 @@
+[
+  {"email": "maya.chen@example.com", "name": "Maya Chen", "tier": "gold", "customer_since": "2021-03-14", "lifetime_orders": 14, "open_tickets": 0, "notes": "Prefers email. Frequent returner but always within policy."},
+  {"email": "dev.patel@example.com", "name": "Dev Patel", "tier": "standard", "customer_since": "2025-11-02", "lifetime_orders": 1, "open_tickets": 0, "notes": ""},
+  {"email": "sam.okafor@example.com", "name": "Sam Okafor", "tier": "standard", "customer_since": "2024-06-20", "lifetime_orders": 3, "open_tickets": 1, "notes": "Previous ticket about a late delivery in July resolved with a refund of shipping cost."},
+  {"email": "lena.fischer@example.com", "name": "Lena Fischer", "tier": "silver", "customer_since": "2022-09-01", "lifetime_orders": 6, "open_tickets": 0, "notes": "International (Germany)."},
+  {"email": "jordan.reyes@example.com", "name": "Jordan Reyes", "tier": "standard", "customer_since": "2026-08-01", "lifetime_orders": 1, "open_tickets": 0, "notes": ""}
+]

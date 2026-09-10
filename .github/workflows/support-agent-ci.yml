@@ -1,0 +1,22 @@
+name: support-agent CI
+on:
+  push:
+    paths: ["support-agent/**", ".github/workflows/support-agent-ci.yml"]
+  pull_request:
+    paths: ["support-agent/**", ".github/workflows/support-agent-ci.yml"]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: support-agent } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv venv .venv && uv pip install -e ".[dev]"
+      - run: .venv/bin/ruff check src tests evals && .venv/bin/ruff format --check src tests evals
+      - run: .venv/bin/mypy src
+      - run: .venv/bin/pytest --cov=support_agent --cov-report=term-missing
+      # Offline eval gate: fails the build on any unsafe auto-send or < 90% decision accuracy.
+      - run: .venv/bin/support-agent eval --fail-under 0.9
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: eval-report, path: support-agent/evals/report.json }

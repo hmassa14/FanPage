@@ -1,0 +1,78 @@
+# Policy gates. Version this file; the version string is stored on every gate decision so
+# you can answer "which rules were in force when this reply went out?" months later.
+version: "2026-09-10.1"
+
+auto_send:
+  # Only these categories may go out without a human. Everything else needs approval.
+  allowed_categories:
+    - order_status
+    - shipping_issue
+    - product_question
+    - account_access
+    - return_or_refund
+  min_triage_confidence: 0.80
+  min_draft_confidence: 0.75
+  min_grounding_score: 0.85
+  require_kb_citation: true
+  max_reply_words: 350
+  max_urgency: high            # critical always needs a human
+
+escalate:
+  categories:
+    - legal_or_regulatory
+    - data_privacy_request
+  # Deterministic keyword tripwires: regular expressions, case-insensitive, matched against
+  # the redacted subject + body. Word boundaries matter ("sue" must not match "suede").
+  keywords:
+    - '\blawyers?\b'
+    - '\battorneys?\b'
+    - '\bsu(e|ed|ing)\b'
+    - '\blawsuit\b'
+    - '\blegal action\b'
+    - '\bchargeback\b'
+    - '\bdispute (the|this) charge\b'
+    - '\bbetter business bureau\b'
+    - '\bbbb\b'
+    - '\b(the )?press\b'
+    - '\bjournalist\b'
+    - '\bgdpr\b'
+    - '\bccpa\b'
+    - '\bdelete my (data|account)\b'
+    - '\binjur(y|ies|ed)\b'
+    - '\bhospital\b'
+    - '\bcaught fire\b'
+    - '\bexploded\b'
+    - '\bmy (child|son|daughter|kid)\b'
+  sentiments:
+    - angry
+
+reject:
+  categories:
+    - spam_or_irrelevant
+
+actions:
+  # Side effects the reply may promise. Anything not listed here is blocked.
+  auto_approve:
+    issue_refund:
+      max_amount_usd: 50.00
+    reset_password_link: {}
+    replace_item:
+      max_amount_usd: 75.00
+  always_require_approval:
+    - cancel_order
+    - update_shipping_address
+
+content:
+  # Phrases that must never appear in an outbound reply. Matched case-insensitively.
+  banned_phrases:
+    - "our fault"
+    - "we are liable"
+    - "we admit"
+    - "guarantee"
+    - "legally"
+    - "as a courtesy we will always"
+    - "internal policy"
+    - "manager approval"
+  # Any of these means the draft leaked a redaction placeholder or internal marker.
+  block_if_contains_placeholder: true
+  require_language_match: true

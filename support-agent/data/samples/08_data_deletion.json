@@ -1,0 +1,1 @@
+{"message_id": "<sample-08@customer.example>", "from_address": "sam.okafor@example.com", "from_name": "Sam Okafor", "to_address": "support@northwind-outfitters.example", "subject": "Please delete my account", "body_text": "Under GDPR I request that you delete my account and all personal data you hold about me. Please confirm when done.", "received_at": "2026-09-10T13:00:00Z"}

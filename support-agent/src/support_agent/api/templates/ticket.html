@@ -1,0 +1,59 @@
+{% extends "base.html" %}{% block title %}{{ t.email.subject }}{% endblock %}
+{% block subtitle %}ticket {{ t.id }} · trace {{ t.trace_id }}{% endblock %}
+{% block content %}
+<h2>{{ t.email.subject }} <span class="pill {{ t.status.value }}">{{ t.status.value }}</span></h2>
+<div class="grid">
+ <div class="card"><h3>Customer email (redacted view)</h3>
+  <p><b>{{ t.email.from_name }}</b> &lt;{{ t.email.from_address }}&gt; · {{ t.email.received_at }}</p>
+  <pre>{{ t.redacted.body_text if t.redacted else t.email.body_text }}</pre>
+  {% if t.redacted and t.redacted.redactions %}<p>Redacted: {{ t.redacted.redactions }}</p>{% endif %}
+ </div>
+ <div class="card"><h3>Triage</h3>{% if t.triage %}
+  <p><b>{{ t.triage.category.value }}</b> · urgency {{ t.triage.urgency.value }} · sentiment {{ t.triage.sentiment.value }} · lang {{ t.triage.language }} · confidence {{ '%.2f' % t.triage.confidence }}</p>
+  <p>{{ t.triage.summary }}</p><p><i>Ask:</i> {{ t.triage.customer_ask }}</p>
+  <p>Orders: {{ t.triage.entities.order_ids }}</p>{% if t.triage.requires_human_reason %}<p class="escalate">Human required: {{ t.triage.requires_human_reason }}</p>{% endif %}
+  {% endif %}</div>
+</div>
+{% if t.gate %}<div class="card"><h3>Gate: {{ t.gate.decision.value }} <small>(policy {{ t.gate.policy_version }})</small></h3>
+ {% for r in t.gate.reasons %}<div class="reason {{ r.severity }}">[{{ r.severity }}] {{ r.rule }}: {{ r.detail }}</div>{% endfor %}</div>{% endif %}
+<div class="grid">
+ <div class="card"><h3>Research brief</h3>{% if t.research %}
+  <p><b>Customer:</b> {{ t.research.customer_context }}</p><p><b>Order:</b> {{ t.research.order_context }}</p>
+  <p><b>Recommended resolution:</b> {{ t.research.recommended_resolution }}</p>
+  {% if t.research.open_questions %}<p><b>Open questions:</b> {{ t.research.open_questions }}</p>{% endif %}
+  <p><b>Tools used:</b> {{ t.research.tools_used }}</p>
+  <details><summary>{{ t.research.relevant_policies|length }} policy citations, {{ t.research.findings|length }} findings</summary>
+  {% for c in t.research.relevant_policies %}<p><b>{{ c.doc_id }}</b> / {{ c.section }}<br><small>{{ c.quote }}</small></p>{% endfor %}
+  {% for f in t.research.findings %}<p>• {{ f.claim }} <small>({{ f.source }})</small></p>{% endfor %}</details>
+ {% else %}<p>Not run.</p>{% endif %}</div>
+ <div class="card"><h3>Judge</h3>{% if t.judge %}
+  <p>grounded={{ t.judge.grounded }} score={{ '%.2f' % t.judge.score }} tone_ok={{ t.judge.tone_ok }}</p>
+  {% if t.judge.unsupported_claims %}<p>Unsupported: {{ t.judge.unsupported_claims }}</p>{% endif %}
+  {% if t.judge.policy_conflicts %}<p>Conflicts: {{ t.judge.policy_conflicts }}</p>{% endif %}
+  {% if t.judge.issues %}<p>Issues: {{ t.judge.issues }}</p>{% endif %}
+ {% else %}<p>Not run (gates fail closed).</p>{% endif %}
+ {% if t.draft %}<h3>Proposed actions</h3>{% for a in t.draft.proposed_actions %}<p>• {{ a.type.value }}{% if a.amount_usd %} ${{ '%.2f' % a.amount_usd }}{% endif %}{% if a.order_id %} ({{ a.order_id }}){% endif %} — {{ a.rationale }}</p>{% else %}<p>None.</p>{% endfor %}
+ <p><small>Reviewer notes: {{ t.draft.notes_for_reviewer }}</small></p>{% endif %}</div>
+</div>
+{% if t.status.value == 'awaiting_approval' and t.draft %}
+<div class="card"><h3>Review draft</h3>
+<form method="post" action="/tickets/{{ t.id }}/decide">
+ <p><input type="text" name="subject" value="{{ t.draft.subject }}"></p>
+ <p><textarea name="body" rows="14">{{ t.draft.body }}</textarea></p>
+ <p><input type="text" name="note" placeholder="Note for the audit log (optional)"></p>
+ <button class="primary" name="action" value="approve">Approve &amp; send</button>
+ <button name="action" value="escalate">Escalate</button>
+ <button class="danger" name="action" value="reject">Reject</button>
+</form></div>
+{% elif t.final_reply %}
+<div class="card"><h3>Final reply {% if t.final_reply.edited %}(edited){% endif %} · approved by {{ t.final_reply.approved_by }}</h3>
+<pre>Subject: {{ t.final_reply.subject }}
+
+{{ t.final_reply.body }}</pre>
+{% if outbox %}<p>Outbox: {{ outbox.status }} · attempts {{ outbox.attempts }} {% if outbox.last_error %}· {{ outbox.last_error }}{% endif %}</p>{% endif %}</div>
+{% elif t.draft %}<div class="card"><h3>Draft (not sent)</h3><pre>{{ t.draft.body }}</pre></div>{% endif %}
+<div class="card"><h3>Audit trail</h3><table>
+{% for e in events %}<tr><td><small>{{ e.ts }}</small></td><td>{{ e.stage }}</td><td>{{ e.level }}</td><td>{{ e.message }}</td></tr>{% endfor %}
+</table><p>Usage: {% for u in t.usage %}{{ u.stage }}={{ u.model }} {{ u.input_tokens }}/{{ u.output_tokens }} tok ${{ '%.4f' % u.cost_usd }}; {% endfor %} total ${{ '%.4f' % t.total_cost_usd }}</p></div>
+{% if t.error %}<div class="card"><h3>Error</h3><pre>{{ t.error }}</pre></div>{% endif %}
+{% endblock %}
