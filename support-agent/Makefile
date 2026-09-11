@@ -15,8 +15,11 @@ lint:
 typecheck:
 	.venv/bin/mypy src
 
-eval:               ## replay the labeled dataset; fails on unsafe sends or < 90% decision accuracy
-	.venv/bin/support-agent eval
+eval:               ## end-to-end pass@1/pass^k + per-component scorecard; fails on unsafe sends
+	.venv/bin/support-agent eval --trials 3 --components
+
+trace:              ## Jaeger UI at http://localhost:16686 ; then run with SA_OTEL_EXPORTER=otlp
+	docker run --rm -d --name jaeger -e COLLECTOR_OTLP_ENABLED=true -p 16686:16686 -p 4318:4318 jaegertracing/all-in-one:1.62.0
 
 serve:              ## approval UI at http://127.0.0.1:8000 (basic auth: any user / SA_ADMIN_TOKEN)
 	.venv/bin/support-agent serve

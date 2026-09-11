@@ -16,7 +16,7 @@ jobs:
       - run: .venv/bin/mypy src
       - run: .venv/bin/pytest --cov=support_agent --cov-report=term-missing
       # Offline eval gate: fails the build on any unsafe auto-send or < 90% decision accuracy.
-      - run: .venv/bin/support-agent eval --fail-under 0.9
+      - run: .venv/bin/support-agent eval --fail-under 0.9 --trials 2 --components
       - uses: actions/upload-artifact@v4
         if: always()
-        with: { name: eval-report, path: support-agent/evals/report.json }
+        with: { name: eval-report, path: "support-agent/evals/report.* support-agent/evals/scorecard.*" }

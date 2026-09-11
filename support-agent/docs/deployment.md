@@ -29,8 +29,10 @@
   fallbacks become the SDK's client-side middleware there.
 * **Data handling:** PII is redacted before any model call; raw email stays in the customer's
   database. Zero-data-retention or 30-day retention is agreed in the contract, not assumed.
-* **Observability:** JSON logs carry `trace_id`/`ticket_id`; `/metrics` is Prometheus text.
-  Add an OTel exporter for traces if they run one; the stage boundaries are the spans.
+* **Observability:** OpenTelemetry traces (one per ticket, spans per stage and tool call, with
+  model/tokens/cost) to any OTLP backend: `SA_OTEL_EXPORTER=otlp`, `SA_OTEL_ENDPOINT=...`.
+  Jaeger ships in compose; point it at their Tempo/Honeycomb/Datadog instead. JSON logs carry
+  the OTel trace id. `/metrics` is Prometheus text. `/scorecard` is the ops page.
 * **Retrieval:** the BM25 knowledge base is fine for a policy corpus. For a full help center
   put their existing search (or a vector index) behind `KnowledgeBase.search`; the contract
   does not change.

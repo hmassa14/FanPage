@@ -58,8 +58,19 @@ _STOP = {
 }
 
 
+def _stem(t: str) -> str:
+    """Light suffix stripping. Enough to make 'returned', 'returns', 'returning' match 'return'
+    without pulling in a stemming library. The retrieval eval is what justified adding it."""
+    for suffix in ("ing", "ies", "ed", "es", "s"):
+        if len(t) > len(suffix) + 3 and t.endswith(suffix):
+            if suffix == "ies":
+                return t[:-3] + "y"
+            return t[: -len(suffix)]
+    return t
+
+
 def tokenize(text: str) -> list[str]:
-    return [t for t in _TOKEN.findall(text.lower()) if t not in _STOP]
+    return [_stem(t) for t in _TOKEN.findall(text.lower()) if t not in _STOP]
 
 
 @dataclass(frozen=True)

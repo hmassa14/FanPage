@@ -1,0 +1,38 @@
+{% extends "base.html" %}{% block title %}Scorecard{% endblock %}
+{% block subtitle %}policy {{ policy }} · provider {{ provider }}{% endblock %}
+{% block content %}
+<h2>Live (this database)</h2>
+<div class="card">
+ <span class="stat"><b>{{ live.tickets }}</b> tickets</span>
+ <span class="stat"><b>${{ '%.4f' % live.cost_per_ticket_usd }}</b> per ticket</span>
+ {% for d, n in live.by_decision.items() %}<span class="stat"><b>{{ n }}</b> {{ d }}</span>{% endfor %}
+ {% if live.edit_rate is not none %}<span class="stat"><b>{{ '%.0f' % (live.edit_rate * 100) }}%</b> of approvals edited</span>{% endif %}
+</div>
+<div class="grid">
+ <div class="card"><h3>Why replies stopped (gate reasons)</h3>
+  <table>{% for rule, n in live.gate_reasons.items() %}<tr><td>{{ rule }}</td><td><b>{{ n }}</b></td>
+  <td style="width:40%"><div style="background:#fde68a;height:.8rem;width:{{ (100 * n / (live.gate_reasons.values()|max)) | int }}%"></div></td></tr>
+  {% else %}<tr><td>No gate decisions yet.</td></tr>{% endfor %}</table></div>
+ <div class="card"><h3>Cost and latency by stage</h3>
+  <table><tr><th>stage</th><th>calls</th><th>cost</th><th>mean latency</th></tr>
+  {% for st, v in live.stage_cost.items() %}<tr><td>{{ st }}</td><td>{{ v.calls }}</td><td>${{ '%.4f' % v.cost_usd }}</td><td>{{ v.mean_latency_ms }} ms</td></tr>{% endfor %}</table></div>
+</div>
+
+<h2>Latest eval run</h2>
+{% if scorecard %}
+<div class="card"><table>
+<tr><th>component</th><th>metric</th><th>value</th><th>notes</th></tr>
+<tr><td>triage</td><td>category accuracy</td><td><b>{{ scorecard.triage.accuracy }}</b></td><td>{{ scorecard.triage.n }} labeled · {{ scorecard.triage.confusions|length }} confusions</td></tr>
+<tr><td>retrieval</td><td>recall@1 / recall@3 / MRR</td><td><b>{{ scorecard.retrieval.recall_at_1 }} / {{ scorecard.retrieval.recall_at_3 }} / {{ scorecard.retrieval.mrr }}</b></td><td>{{ scorecard.retrieval.n }} queries · doc-level recall@3 {{ scorecard.retrieval.doc_recall_at_3 }}</td></tr>
+<tr><td>draft</td><td>rubric mean</td><td><b>{{ scorecard.draft.rubric_mean }}</b></td><td>judge grounding on clean drafts {{ scorecard.draft.judge_grounding_mean_on_clean }}</td></tr>
+<tr><td>judge</td><td>seeded-error detection</td><td><b>{{ scorecard.judge.detection_mean }}</b></td><td>{% for k, v in scorecard.judge.seeded_error_detection.items() %}{{ k }} {{ v }} · {% endfor %}false-positive {{ scorecard.judge.false_positive_rate_on_clean }}</td></tr>
+<tr><td>gates</td><td>decision agreement (policy replay)</td><td><b>{{ scorecard.gates.decision_agreement }}</b></td><td>policy {{ scorecard.gates.policy_version }}</td></tr>
+{% if e2e %}<tr><td>end-to-end</td><td>pass@1 / pass^{{ e2e.trials_per_case }}</td><td><b>{{ e2e.pass_at_1 }} / {{ e2e.pass_hat_k[e2e.trials_per_case|string] }}</b></td><td>{{ e2e.cases }} cases × {{ e2e.trials_per_case }} trials · unsafe sends <b>{{ e2e.unsafe_sends }}</b> · ${{ '%.4f' % e2e.total_cost_usd }}</td></tr>{% endif %}
+</table>
+{% if scorecard.retrieval.misses %}<details><summary>{{ scorecard.retrieval.misses|length }} retrieval misses</summary>{% for m in scorecard.retrieval.misses %}<p><code>{{ m.query }}</code> expected {{ m.expected }}, got {{ m.got }}</p>{% endfor %}</details>{% endif %}
+{% if scorecard.triage.confusions %}<details><summary>{{ scorecard.triage.confusions|length }} triage confusions</summary>{% for c in scorecard.triage.confusions %}<p>expected {{ c.expected }}, got {{ c.got }} ×{{ c.n }}</p>{% endfor %}</details>{% endif %}
+</div>
+{% else %}
+<div class="card"><p>No eval run found. Run <code>support-agent eval --trials 4 --components</code>.</p></div>
+{% endif %}
+{% endblock %}

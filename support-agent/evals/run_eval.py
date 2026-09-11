@@ -184,12 +184,24 @@ def render_markdown(report: dict[str, Any]) -> str:
     return "\n".join(out) + "\n"
 
 
-def main(dataset: str, report: str, fail_under: float, trials: int = 1) -> int:
+def main(dataset: str, report: str, fail_under: float, trials: int = 1, components: bool = False) -> int:
     report_path = Path(report)
     result = run(Path(dataset), trials, report_path.parent / ".eval_sent")
     report_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
     md_path = report_path.with_suffix(".md")
     md_path.write_text(render_markdown(result), encoding="utf-8")
+
+    if components:
+        from components import render_scorecard, run_components  # type: ignore[import-not-found]
+
+        sc = run_components(
+            Path(dataset), Path(dataset).parent / "retrieval.jsonl", report_path.parent / ".eval_sent"
+        )
+        sc_path = report_path.parent / "scorecard.json"
+        sc_path.write_text(json.dumps({**sc, "end_to_end": result["summary"]}, indent=2), encoding="utf-8")
+        md = render_scorecard(sc, result["summary"])
+        sc_path.with_suffix(".md").write_text(md, encoding="utf-8")
+        print(md)
 
     s = result["summary"]
     print(f"{'id':<4}{'expected':<16}{'pass@1':<8}{'pass^k':<8}{'decisions seen':<34}unsafe  cost")

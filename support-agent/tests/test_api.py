@@ -48,3 +48,9 @@ def test_ingest_review_approve_flow(client):
 
 def test_unknown_ticket_404(client):
     assert client.get("/api/tickets/nope", headers=H).status_code == 404
+
+
+def test_scorecard_page_and_api(client):
+    assert client.get("/scorecard", auth=("haley", "test-token")).status_code == 200
+    body = client.get("/api/scorecard", headers=H).json()
+    assert "live" in body and body["live"]["tickets"] == 0

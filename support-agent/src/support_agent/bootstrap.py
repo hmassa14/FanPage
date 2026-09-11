@@ -11,6 +11,7 @@ from .logging_setup import configure_logging
 from .pipeline.gates import Policy
 from .pipeline.orchestrator import Pipeline
 from .store.db import Store
+from .tracing import configure_tracing
 
 
 def build_pipeline(
@@ -18,6 +19,7 @@ def build_pipeline(
 ) -> Pipeline:
     s = settings or get_settings()
     configure_logging(s.log_level, s.log_json)
+    configure_tracing(s)
     return Pipeline(
         settings=s,
         store=store or Store(s.db_path),

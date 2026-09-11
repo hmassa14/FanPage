@@ -17,6 +17,16 @@ trace_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("trace
 ticket_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("ticket_id", default=None)
 
 
+def _otel_trace_id() -> str | None:
+    try:
+        from opentelemetry import trace
+
+        ctx = trace.get_current_span().get_span_context()
+        return format(ctx.trace_id, "032x") if ctx.is_valid else None
+    except Exception:  # noqa: BLE001 - logging must never fail because tracing did
+        return None
+
+
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
@@ -26,6 +36,7 @@ class JsonFormatter(logging.Formatter):
             "msg": record.getMessage(),
             "trace_id": trace_id_var.get(),
             "ticket_id": ticket_id_var.get(),
+            "otel_trace_id": _otel_trace_id(),
         }
         extra = getattr(record, "data", None)
         if extra:

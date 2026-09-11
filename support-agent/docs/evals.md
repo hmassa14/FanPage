@@ -24,12 +24,34 @@ Separately, an **unsafe send** is any auto_send where a human was expected. One 
 fails the run regardless of the averages. That asymmetry is deliberate: a wrong refund that
 went out is not the same kind of error as a good reply that waited for approval.
 
+## The component scorecard
+End-to-end pass^k says *whether* the system is right. In the second week of a pilot you need
+to know *which stage* is wrong. `--components` scores each one on its own:
+
+| component | metric | how |
+|---|---|---|
+| triage | category accuracy, confusion pairs | labeled emails |
+| retrieval | recall@1, recall@3, MRR | `evals/retrieval.jsonl`: 24 questions labeled with the policy section that answers them |
+| draft | rubric (greeting, sign-off, length, cites KB, no banned phrase, no placeholder, language) | deterministic checks on every draft; plus the judge's grounding score on clean drafts |
+| judge | seeded-error detection, false-positive rate | every clean draft is corrupted three ways (unsupported timeframe, unpromised $500 refund, liability admission); does the judge catch each? does it pass the clean one? |
+| gates | decision agreement | current `policy.yaml` replayed over stored stage outputs |
+
+It writes `evals/scorecard.json` and `evals/scorecard.md`, and the `/scorecard` page shows
+the latest one next to live numbers from the database.
+
+**What it caught on its first run.** Retrieval recall@3 was 0.83 on 24 queries. All four
+misses had one cause: no stemming, so "return" never matched "returned". A twelve-line
+suffix stripper took recall@3 to 0.92 and MRR from 0.75 to 0.85, with document-level
+recall@3 at 1.0. The two remaining misses are vocabulary ("shoes" vs "footwear", "card" vs
+"payment method"), which is exactly where hybrid or embedding retrieval starts to earn its
+cost. That is the argument for measuring before adding infrastructure.
+
 ## Running it
 ```bash
-make eval                                            # offline, deterministic, CI gate
-SA_LLM_PROVIDER=anthropic support-agent eval --trials 4    # live, pass^k becomes meaningful
+make eval                                                        # offline: 3 trials + components, CI gate
+SA_LLM_PROVIDER=anthropic support-agent eval --trials 4 --components   # live: pass^k becomes meaningful
 ```
-Outputs `evals/report.json` (machine) and `evals/report.md` (share with the customer).
+Outputs `evals/report.{json,md}` (end to end) and `evals/scorecard.{json,md}` (per component).
 
 ## The dataset
 `evals/dataset.jsonl`: 14 cases covering every gate path, including a prompt-injection

@@ -227,6 +227,53 @@ class Store:
             "cost_usd": round(row["cost"], 6),
         }
 
+    def ops_stats(self) -> dict[str, Any]:
+        """Live numbers for the scorecard page: decisions, gate reasons, cost, review outcomes."""
+        decisions = {
+            r["gate_decision"]: r["n"]
+            for r in self._conn.execute(
+                "SELECT gate_decision, COUNT(*) n FROM tickets WHERE gate_decision IS NOT NULL "
+                "GROUP BY gate_decision"
+            ).fetchall()
+        }
+        reasons: dict[str, int] = {}
+        for r in self._conn.execute(
+            "SELECT data_json FROM events WHERE stage='gate' AND data_json IS NOT NULL"
+        ).fetchall():
+            for reason in json.loads(r["data_json"]).get("reasons", []):
+                if reason.get("severity") != "info":
+                    reasons[reason["rule"]] = reasons.get(reason["rule"], 0) + 1
+        approvals = {
+            r["action"]: {"n": r["n"], "edited": r["edited"]}
+            for r in self._conn.execute(
+                "SELECT action, COUNT(*) n, SUM(edited) edited FROM approvals GROUP BY action"
+            ).fetchall()
+        }
+        stage_cost = {
+            r["stage"]: {
+                "calls": r["n"],
+                "cost_usd": round(r["cost"], 6),
+                "mean_latency_ms": int(r["lat"] or 0),
+            }
+            for r in self._conn.execute(
+                "SELECT stage, COUNT(*) n, COALESCE(SUM(cost_usd),0) cost, AVG(latency_ms) lat "
+                "FROM usage GROUP BY stage"
+            ).fetchall()
+        }
+        n_tickets = self._conn.execute("SELECT COUNT(*) n FROM tickets").fetchone()["n"]
+        totals = self.usage_totals()
+        approved = approvals.get("approve", {"n": 0, "edited": 0})
+        return {
+            "tickets": n_tickets,
+            "by_status": self.counts_by_status(),
+            "by_decision": decisions,
+            "gate_reasons": dict(sorted(reasons.items(), key=lambda kv: -kv[1])),
+            "cost_per_ticket_usd": round(totals["cost_usd"] / n_tickets, 5) if n_tickets else 0.0,
+            "stage_cost": stage_cost,
+            "approvals": approvals,
+            "edit_rate": round((approved["edited"] or 0) / approved["n"], 3) if approved["n"] else None,
+        }
+
     # ---- outbox ------------------------------------------------------------- #
     def enqueue_outbox(
         self, ticket_id: str, to_address: str, subject: str, body: str, in_reply_to: str | None

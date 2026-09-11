@@ -92,6 +92,11 @@ class Settings(BaseSettings):
     log_json: bool = True
     log_level: str = "INFO"
 
+    # --- tracing ------------------------------------------------------------
+    otel_exporter: Literal["none", "console", "otlp"] = "none"
+    otel_endpoint: str = "http://localhost:4318"
+    otel_service_name: str = "support-agent"
+
     def price(self, model: str) -> tuple[float, float]:
         return MODEL_PRICES_PER_MTOK.get(model, (0.0, 0.0))
 

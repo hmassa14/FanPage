@@ -100,7 +100,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
     sys.path.insert(0, str(PROJECT_ROOT / "evals"))
     from run_eval import main as eval_main  # type: ignore[import-not-found]
 
-    return eval_main(args.dataset, args.report, args.fail_under, args.trials)
+    return eval_main(args.dataset, args.report, args.fail_under, args.trials, args.components)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -129,6 +129,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--report", default=str(PROJECT_ROOT / "evals" / "report.json"))
     p.add_argument("--fail-under", type=float, default=0.9)
     p.add_argument("--trials", type=int, default=1, help="runs per case; enables pass^k")
+    p.add_argument("--components", action="store_true", help="also score each stage on its own")
     p.set_defaults(fn=cmd_eval)
     args = parser.parse_args(argv)
     return args.fn(args)

@@ -35,8 +35,9 @@ cd support-agent
 make install          # uv venv + editable install with dev extras
 make demo             # 14 sample emails through the whole pipeline, replies printed to stdout
 make serve            # approval UI at http://127.0.0.1:8000  (user: anything, password: change-me)
-make test             # 43 offline tests (78% coverage)
-make eval             # labeled replay: pass@1, pass^k, unsafe sends; fails on any unsafe auto-send
+make test             # 56 offline tests
+make eval             # pass@1, pass^k, unsafe sends, plus a per-component scorecard
+make trace            # Jaeger; then SA_OTEL_EXPORTER=otlp make demo and open http://localhost:16686
 ```
 
 To run against Claude:
@@ -66,9 +67,9 @@ failing the ticket. Change one stage at a time via `SA_<STAGE>__MODEL` / `__EFFO
 | Side effects | `orchestrator._release` | proposed actions (refunds, cancellations) execute only after gates pass or a human approves; refund/replace caps and always-human actions in policy |
 | Human in the loop | `api/app.py` | approval queue with approve / edit / reject / escalate; who did what is recorded |
 | Delivery | `delivery/`, outbox table | transactional outbox with bounded retries; console, file, and SMTP adapters |
-| Observability | `logging_setup.py`, `/metrics` | JSON logs with `trace_id`/`ticket_id` on every line; Prometheus-style ticket counts, tokens, and spend; per-stage latency and cost on each ticket |
+| Observability | `tracing.py`, `logging_setup.py`, `/metrics`, `/scorecard` | OpenTelemetry: one trace per ticket, a span per stage and per tool call with model/tokens/cost/gate decision, exported to Jaeger (in compose) or any OTLP backend; JSON logs carry the OTel trace id; Prometheus-style `/metrics`; a `/scorecard` page with live gate-reason histogram, cost per stage, reviewer edit rate, and the latest eval |
 | Failure handling | orchestrator | any stage exception parks the ticket as `failed` with the error; judge failure degrades to "needs approval" rather than blocking |
-| Evals | `evals/` | labeled replay, n trials per case, **pass@1 and pass^k** (tau-bench style), unsafe-send count; markdown report; CI fails on unsafe auto-sends |
+| Evals | `evals/` | end-to-end: n trials per case, **pass@1 and pass^k** (tau-bench style), unsafe-send count. Per component: triage accuracy + confusions, retrieval recall@k/MRR on labeled queries, draft rubric, judge seeded-error detection + false-positive rate, gate policy replay. Markdown reports; CI fails on unsafe auto-sends |
 | Ops | `Dockerfile`, `docker-compose.yml`, `.github/workflows` | api + worker containers, health check, lint + tests + eval gate in CI |
 
 ## Layout
@@ -136,4 +137,5 @@ All outcomes below are produced by `make demo` and asserted by `make eval`.
 * `docs/customer-brief.md` — the simulated customer, their pain, and who cares about it
 * `docs/evals.md` — pass@1 versus pass^k, what counts as correct, how the eval is used with a customer
 * `docs/deployment.md` — reference deployment, the 90-day pilot, what goes back to Anthropic's product team
-* `docs/demo-script.md` — the eight-beat demo narrative with file pointers
+* `docs/demo-script.md` — the eight-beat demo narrative with file pointers and the run-of-show
+* `docs/observability.md` — traces, logs, metrics, the scorecard page, and what to show whom

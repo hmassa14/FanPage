@@ -13,3 +13,5 @@ evals/report.md
 evals/.eval_sent/
 htmlcov/
 .coverage
+evals/scorecard.json
+evals/scorecard.md

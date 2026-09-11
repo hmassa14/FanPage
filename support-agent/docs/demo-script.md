@@ -55,8 +55,14 @@ Show: `data/crm/`, `data/kb/`, `support-agent demo` running, the summary table.
 > same case are right. That second number is what a CTO should be asking for, because it's
 > the one that predicts whether the support lead still trusts the system in a week.
 
-Show `evals/report.md`. Walk one row. Point at the unsafe-send column: one unsafe send fails
+Show `evals/scorecard.md`: five components and the end-to-end number on one table. Then
+`evals/report.md`; walk one row. Point at the unsafe-send column: one unsafe send fails
 the whole run, regardless of averages.
+
+> The retrieval row is the one I'd stop on. First run: 0.83 recall at 3. Every miss was
+> "return" not matching "returned". A stemmer took it to 0.92 and the two misses left are
+> vocabulary, which is where embeddings would start to pay for themselves. We measured before
+> we bought.
 
 > With a customer, this dataset becomes 300 of their real tickets labeled by their support
 > leads. Every prompt or policy change re-runs it. Nothing ships if pass^k regresses or
@@ -89,6 +95,10 @@ nothing sent, and a reviewer sees exactly what the email tried to do.
 Also worth one sentence each: PII redacted before any model call (`redaction.py`), tools
 scoped to the sender so no cross-customer lookups, transactional outbox so a crash never
 double-sends.
+
+**d. The trace.** Jaeger tab, the same ticket: `ticket.process` with the research loop's
+tool calls as child spans, `gate.evaluate` carrying the reasons, and no `outbox.send` span.
+> This is what on-call sees. Every span has the model, tokens, and dollars on it.
 
 ## 7. Two audiences (1 min)
 **To the CTO:**
@@ -123,8 +133,24 @@ switch.
 
 ---
 
+## Run of show (screens)
+One terminal, three browser tabs: approval UI (`support-agent serve`, http://127.0.0.1:8000),
+Jaeger (`make trace`, http://localhost:16686), and the scorecard (http://127.0.0.1:8000/scorecard).
+
+1. Terminal: `SA_OTEL_EXPORTER=otlp support-agent demo` — 14 emails, the summary table. 30s.
+2. Approval UI: sample 02, the $249 jacket. Gate reasons, brief with citations, draft. Approve
+   with an edit; show the audit trail and outbox update.
+3. Terminal: `support-agent process data/samples/14_prompt_injection.json`. Approval UI: open
+   it. Injection tripwire, order-total check, nothing executed.
+4. Jaeger: the trace for that ticket. 30s, no narration beyond "this is what on-call sees".
+5. Scorecard tab: live gate-reason histogram on the left, the eval scorecard below it.
+   Then `evals/report.md` for pass^k. Live numbers if you have a key; pre-run if the call
+   would be slow on stage.
+6. `docs/deployment.md`: the pilot.
+
 ## Before the meeting
 * Run it live once with a key and put the real `evals/report.md` numbers in beat 5.
-* Have the ticket page for sample 14 open in a browser tab (`support-agent serve`).
+* Have the ticket page for sample 14 open in a browser tab (`support-agent serve`), Jaeger
+  running (`make trace`), and the scorecard tab loaded.
 * Know the honest gaps: SQLite, shared admin token, BM25 retrieval, mock CRM, 14-case eval.
   Say them before they're asked. They are the pilot plan.

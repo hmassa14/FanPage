@@ -14,6 +14,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..tracing import tracer
 from .crm import CRM
 from .kb import KnowledgeBase
 
@@ -85,6 +86,14 @@ class ResearchTools:
 
     # ---- dispatch --------------------------------------------------------- #
     def dispatch(self, name: str, tool_input: dict[str, Any]) -> tuple[str, bool]:
+        with tracer().start_as_current_span(f"tool.{name}") as span:
+            span.set_attribute("tool.input", json.dumps(tool_input, sort_keys=True))
+            out, ok = self._dispatch(name, tool_input)
+            span.set_attribute("tool.ok", ok)
+            span.set_attribute("tool.output_chars", len(out))
+        return out, ok
+
+    def _dispatch(self, name: str, tool_input: dict[str, Any]) -> tuple[str, bool]:
         try:
             if name == "search_knowledge_base":
                 out = self.search_knowledge_base(str(tool_input["query"]))

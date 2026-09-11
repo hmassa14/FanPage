@@ -405,17 +405,24 @@ class FakeProvider:
     def judge(
         self, email: RedactedEmail, brief: ResearchBrief, draft: DraftReply
     ) -> StageOutput[GroundingVerdict]:
-        body = draft.body.lower()
-        issues = []
-        tone_ok = not any(p in body for p in ("our fault", "we are liable", "guarantee"))
+        """Deterministic backstop judge: any amount or timeframe in the reply must appear in
+        the brief, and liability language is a tone failure. Live, Claude does this properly."""
+        body = draft.body
+        lowered = body.lower()
+        evidence = json.dumps(brief.model_dump(mode="json")).lower()
+        issues: list[str] = []
+        tone_ok = not any(p in lowered for p in ("our fault", "we are liable", "guarantee"))
         if not tone_ok:
             issues.append("Tone: contains a liability or guarantee phrase.")
-        unsupported = []
-        if "within 3 business days" in body and "3 business days" not in json.dumps(
-            brief.model_dump(mode="json")
-        ):
-            unsupported.append("within 3 business days")
-        score = 1.0 if not unsupported else 0.5
+        unsupported: list[str] = []
+        for m in re.finditer(r"within \d+ (?:business )?days|\$\d+(?:\.\d{2})?", lowered):
+            claim = m.group(0)
+            if claim not in evidence:
+                unsupported.append(claim)
+        for a in draft.proposed_actions:
+            if a.amount_usd is not None and f"{a.amount_usd:.2f}" not in evidence:
+                unsupported.append(f"{a.type.value} ${a.amount_usd:.2f}")
+        score = 1.0 if not unsupported else max(0.0, 1.0 - 0.5 * len(unsupported))
         verdict = GroundingVerdict(
             grounded=score == 1.0,
             score=score,

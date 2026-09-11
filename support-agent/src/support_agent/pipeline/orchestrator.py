@@ -32,6 +32,7 @@ from ..models import (
 )
 from ..redaction import redact_email
 from ..store.db import Store
+from ..tracing import tracer
 from . import gates
 
 logger = logging.getLogger(__name__)
@@ -72,12 +73,21 @@ class Pipeline:
                 from_address=email.from_address,
                 subject=email.subject,
             )
-            try:
-                self._run(ticket)
-            except Exception as exc:  # noqa: BLE001 - any stage failure parks the ticket
-                ticket.status, ticket.error = TicketStatus.failed, f"{type(exc).__name__}: {exc}"
-                self.store.event(ticket.id, "pipeline", "failed", level="error", error=ticket.error)
-                logger.exception("pipeline failed")
+            with tracer().start_as_current_span("ticket.process") as span:
+                span.set_attribute("ticket.id", ticket.id)
+                span.set_attribute("ticket.trace_id", ticket.trace_id)
+                span.set_attribute("email.subject", email.subject)
+                try:
+                    self._run(ticket)
+                except Exception as exc:  # noqa: BLE001 - any stage failure parks the ticket
+                    ticket.status, ticket.error = TicketStatus.failed, f"{type(exc).__name__}: {exc}"
+                    self.store.event(ticket.id, "pipeline", "failed", level="error", error=ticket.error)
+                    span.record_exception(exc)
+                    logger.exception("pipeline failed")
+                span.set_attribute("ticket.status", ticket.status.value)
+                if ticket.gate:
+                    span.set_attribute("gate.decision", ticket.gate.decision.value)
+                span.set_attribute("ticket.cost_usd", ticket.total_cost_usd)
             self.store.save(ticket)
             return ticket
         finally:
@@ -86,7 +96,19 @@ class Pipeline:
 
     # ---- stages ---------------------------------------------------------------- #
     def _stage(self, ticket: Ticket, name: str, fn: Callable[[], StageOutput[T]]) -> T:
-        out = fn()
+        with tracer().start_as_current_span(f"stage.{name}") as span:
+            out = fn()
+            u = out.usage
+            span.set_attributes(
+                {
+                    "llm.model": u.model,
+                    "llm.input_tokens": u.input_tokens,
+                    "llm.output_tokens": u.output_tokens,
+                    "llm.cache_read_tokens": u.cache_read_tokens,
+                    "llm.cost_usd": u.cost_usd,
+                    "stage.latency_ms": u.latency_ms,
+                }
+            )
         ticket.usage.append(out.usage)
         self.store.record_usage(ticket.id, out.usage)
         self.store.event(
@@ -154,9 +176,13 @@ class Pipeline:
                 level="warning",
                 error=str(exc),
             )
-        ticket.gate = gates.evaluate(
-            self.policy, redacted, triage, ticket.research, ticket.draft, ticket.judge
-        )
+        with tracer().start_as_current_span("gate.evaluate") as span:
+            ticket.gate = gates.evaluate(
+                self.policy, redacted, triage, ticket.research, ticket.draft, ticket.judge
+            )
+            span.set_attribute("gate.decision", ticket.gate.decision.value)
+            span.set_attribute("gate.policy_version", ticket.gate.policy_version)
+            span.set_attribute("gate.reasons", [r.rule for r in ticket.gate.reasons])
         self._apply(ticket)
 
     # ---- decisions ------------------------------------------------------------- #
@@ -280,7 +306,10 @@ class Pipeline:
         sent = 0
         for row in self.store.pending_outbox(self.s.send_max_attempts):
             try:
-                self.sender.send(row["to_address"], row["subject"], row["body"], row["in_reply_to"])
+                with tracer().start_as_current_span("outbox.send") as span:
+                    span.set_attribute("ticket.id", row["ticket_id"])
+                    span.set_attribute("outbox.attempt", row["attempts"] + 1)
+                    self.sender.send(row["to_address"], row["subject"], row["body"], row["in_reply_to"])
             except Exception as exc:  # noqa: BLE001 - record and retry later
                 self.store.mark_outbox(row["id"], sent=False, error=str(exc))
                 self.store.event(

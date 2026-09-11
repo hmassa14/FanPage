@@ -20,6 +20,6 @@
  .grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem} @media(max-width:800px){.grid{grid-template-columns:1fr}}
  .stat{display:inline-block;margin-right:1.2rem} .stat b{font-size:1.3rem}
 </style></head>
-<body><header><a href="/">support-agent</a><small>{% block subtitle %}{% endblock %}</small>
+<body><header><a href="/">support-agent</a><a href="/scorecard" style="font-weight:400">scorecard</a><small>{% block subtitle %}{% endblock %}</small>
 <span style="margin-left:auto;opacity:.8">{{ user }}</span></header>
 <main>{% block content %}{% endblock %}</main></body></html>

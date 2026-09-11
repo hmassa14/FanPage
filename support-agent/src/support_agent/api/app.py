@@ -5,6 +5,7 @@ Replace with your SSO in production; the dependency is the only thing to swap.
 """
 
 import hmac
+import json
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -137,6 +138,34 @@ def create_app(pipeline: Pipeline) -> FastAPI:
             },
         )
 
+    @app.get("/scorecard", response_class=HTMLResponse)
+    def scorecard(request: Request, user: Auth) -> HTMLResponse:
+        """Ops view: latest eval scorecard + live numbers from the store."""
+        evals_dir = pipeline.s.policy_file.parent.parent / "evals"
+        sc = _read_json(evals_dir / "scorecard.json")
+        e2e = _read_json(evals_dir / "report.json")
+        return TEMPLATES.TemplateResponse(
+            request,
+            "scorecard.html",
+            {
+                "user": user,
+                "scorecard": sc,
+                "e2e": (e2e or {}).get("summary"),
+                "live": pipeline.store.ops_stats(),
+                "policy": pipeline.policy.version,
+                "provider": pipeline.provider.name,
+            },
+        )
+
+    @app.get("/api/scorecard")
+    def api_scorecard(_: Auth) -> dict[str, Any]:
+        evals_dir = pipeline.s.policy_file.parent.parent / "evals"
+        return {
+            "scorecard": _read_json(evals_dir / "scorecard.json"),
+            "end_to_end": (_read_json(evals_dir / "report.json") or {}).get("summary"),
+            "live": pipeline.store.ops_stats(),
+        }
+
     @app.get("/tickets/{ticket_id}", response_class=HTMLResponse)
     def ticket_page(request: Request, ticket_id: str, user: Auth) -> HTMLResponse:
         t = pipeline.store.get(ticket_id)
@@ -173,6 +202,13 @@ def create_app(pipeline: Pipeline) -> FastAPI:
         return RedirectResponse(f"/tickets/{ticket_id}", status_code=303)
 
     return app
+
+
+def _read_json(path: Path) -> dict[str, Any] | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
 
 
 def _guard(fn):

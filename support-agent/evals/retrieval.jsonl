@@ -1,0 +1,24 @@
+{"query": "how long do I have to return something after it arrives", "expect_doc": "returns-policy", "expect_section": "Return window"}
+{"query": "can I return shoes without the box", "expect_doc": "returns-policy", "expect_section": "Condition requirements"}
+{"query": "is a final sale item returnable", "expect_doc": "returns-policy", "expect_section": "Non-returnable items"}
+{"query": "when will my refund show up on my card", "expect_doc": "returns-policy", "expect_section": "Refund processing"}
+{"query": "do I pay for return shipping", "expect_doc": "returns-policy", "expect_section": "Return shipping"}
+{"query": "how big a refund can an agent give without approval", "expect_doc": "returns-policy", "expect_section": "Refund authority"}
+{"query": "how many days until my order ships", "expect_doc": "shipping-policy", "expect_section": "Processing time"}
+{"query": "tracking number has not updated in a week", "expect_doc": "shipping-policy", "expect_section": "Late or missing packages"}
+{"query": "package marked delivered but I never got it", "expect_doc": "shipping-policy", "expect_section": "Late or missing packages"}
+{"query": "my item arrived broken in the box", "expect_doc": "shipping-policy", "expect_section": "Damaged in transit"}
+{"query": "change my delivery address after ordering", "expect_doc": "shipping-policy", "expect_section": "Address changes"}
+{"query": "jacket zipper broke after a year is it covered", "expect_doc": "warranty", "expect_section": "Coverage"}
+{"query": "how do I make a warranty claim", "expect_doc": "warranty", "expect_section": "How to file a claim"}
+{"query": "password reset link expired", "expect_doc": "account-and-login", "expect_section": "Password reset"}
+{"query": "locked out after too many login attempts", "expect_doc": "account-and-login", "expect_section": "Locked accounts"}
+{"query": "please change the email on my account", "expect_doc": "account-and-login", "expect_section": "Changing the account email"}
+{"query": "delete my account and personal data", "expect_doc": "account-and-login", "expect_section": "Deleting an account"}
+{"query": "cancel my order before it ships", "expect_doc": "order-changes", "expect_section": "Cancelling an order"}
+{"query": "price dropped a day after I bought it", "expect_doc": "order-changes", "expect_section": "Price adjustments"}
+{"query": "apply a promo code to an order I already placed", "expect_doc": "order-changes", "expect_section": "Discount codes"}
+{"query": "customer says they will call a lawyer", "expect_doc": "escalation-sop", "expect_section": "When to escalate to a human immediately"}
+{"query": "how to wash a down jacket", "expect_doc": "product-care", "expect_section": "Down jackets"}
+{"query": "do the boots run small", "expect_doc": "product-care", "expect_section": "Sizing"}
+{"query": "how to store a sleeping bag", "expect_doc": "product-care", "expect_section": "Sleeping bags"}
