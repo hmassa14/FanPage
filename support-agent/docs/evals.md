@@ -46,9 +46,22 @@ recall@3 at 1.0. The two remaining misses are vocabulary ("shoes" vs "footwear",
 "payment method"), which is exactly where hybrid or embedding retrieval starts to earn its
 cost. That is the argument for measuring before adding infrastructure.
 
+**BM25 versus hybrid, on the same table.** With `SA_RETRIEVER=hybrid` the scorecard adds a
+row for Weaviate hybrid search next to BM25, same 24 queries. Offline, with the key-free
+hash embedder, hybrid scores *below* stemmed BM25 (recall@3 0.875 vs 0.917): Weaviate's
+own BM25 has no stemmer, and hashed trigrams are lexical, not semantic. That row is there
+to be honest, not to look good. The row that decides anything is the one produced with
+`SA_EMBEDDER=voyage` and a `VOYAGE_API_KEY`, which is part of the first live run. If Voyage
+closes the two vocabulary misses without regressing the rest, hybrid earns its container.
+If it doesn't, BM25 stays and you have the evidence.
+
+An `alpha` sweep is one loop over `kb.search_hybrid(q, alpha=...)`; the harness records
+whichever value is configured.
+
 ## Running it
 ```bash
 make eval                                                        # offline: 3 trials + components, CI gate
+make eval-hybrid                                                 # same, hybrid retrieval on embedded Weaviate
 SA_LLM_PROVIDER=anthropic support-agent eval --trials 4 --components   # live: pass^k becomes meaningful
 ```
 Outputs `evals/report.{json,md}` (end to end) and `evals/scorecard.{json,md}` (per component).

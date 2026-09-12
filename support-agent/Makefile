@@ -18,6 +18,9 @@ typecheck:
 eval:               ## end-to-end pass@1/pass^k + per-component scorecard; fails on unsafe sends
 	.venv/bin/support-agent eval --trials 3 --components
 
+eval-hybrid:        ## same scorecard with hybrid retrieval on embedded Weaviate (set VOYAGE_API_KEY + SA_EMBEDDER=voyage for real embeddings)
+	SA_RETRIEVER=hybrid .venv/bin/support-agent eval --trials 1 --components
+
 trace:              ## Jaeger UI at http://localhost:16686 ; then run with SA_OTEL_EXPORTER=otlp
 	docker run --rm -d --name jaeger -e COLLECTOR_OTLP_ENABLED=true -p 16686:16686 -p 4318:4318 jaegertracing/all-in-one:1.62.0
 

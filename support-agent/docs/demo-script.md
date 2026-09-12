@@ -59,10 +59,12 @@ Show `evals/scorecard.md`: five components and the end-to-end number on one tabl
 `evals/report.md`; walk one row. Point at the unsafe-send column: one unsafe send fails
 the whole run, regardless of averages.
 
-> The retrieval row is the one I'd stop on. First run: 0.83 recall at 3. Every miss was
+> The retrieval rows are the ones I'd stop on. First run: 0.83 recall at 3. Every miss was
 > "return" not matching "returned". A stemmer took it to 0.92 and the two misses left are
-> vocabulary, which is where embeddings would start to pay for themselves. We measured before
-> we bought.
+> vocabulary. So I put the same chunks in Weaviate with hybrid search and scored it on the
+> same table. With Voyage embeddings [your live number]; with the key-free fallback it's
+> actually below BM25, and the report says so. We measured before we bought, and the
+> container stays only if the number says it should.
 
 > With a customer, this dataset becomes 300 of their real tickets labeled by their support
 > leads. Every prompt or policy change re-runs it. Nothing ships if pass^k regresses or

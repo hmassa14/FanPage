@@ -33,9 +33,11 @@ def sent_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def pipeline(settings: Settings, sent_dir: Path):
-    return build_pipeline(
+    p = build_pipeline(
         settings, store=Store(":memory:"), sender=FileSender(settings.support_address, sent_dir)
     )
+    yield p
+    p.close()
 
 
 def load_sample(name: str):

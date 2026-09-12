@@ -16,7 +16,7 @@ def test_component_scorecard_runs_offline(settings, tmp_path: Path, monkeypatch)
         tmp_path / "sent",
     )
     assert sc["triage"]["accuracy"] == 1.0
-    assert sc["retrieval"]["recall_at_3"] >= 0.85 and sc["retrieval"]["mrr"] >= 0.75
+    assert sc["retrieval"]["bm25"]["recall_at_3"] >= 0.85 and sc["retrieval"]["bm25"]["mrr"] >= 0.75
     assert sc["draft"]["rubric_pass_rate"]["no_placeholder"] == 1.0
     # the offline judge must catch every seeded corruption and pass every clean draft
     assert sc["judge"]["detection_mean"] == 1.0
@@ -32,4 +32,4 @@ def test_component_scorecard_runs_offline(settings, tmp_path: Path, monkeypatch)
             "unsafe_sends": 0,
         },
     )
-    assert "| retrieval |" in md and "pass^3" in md
+    assert "| retrieval (bm25) |" in md and "pass^3" in md

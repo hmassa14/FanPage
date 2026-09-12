@@ -53,6 +53,11 @@ class Pipeline:
         self.s, self.store, self.provider = settings, store, provider
         self.kb, self.crm, self.sender, self.policy = kb, crm, sender, policy
 
+    def close(self) -> None:
+        """Release this pipeline's own resources. The knowledge base is shared per process
+        (see bootstrap.build_knowledge_base) and is closed at interpreter exit."""
+        self.store.close()
+
     # ---- entry point -------------------------------------------------------- #
     def process_email(self, email: InboundEmail) -> Ticket:
         trace_id = uuid.uuid4().hex

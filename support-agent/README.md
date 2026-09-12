@@ -35,7 +35,7 @@ cd support-agent
 make install          # uv venv + editable install with dev extras
 make demo             # 14 sample emails through the whole pipeline, replies printed to stdout
 make serve            # approval UI at http://127.0.0.1:8000  (user: anything, password: change-me)
-make test             # 56 offline tests
+make test             # 60 offline tests (hybrid ones start embedded Weaviate; skip if it can't)
 make eval             # pass@1, pass^k, unsafe sends, plus a per-component scorecard
 make trace            # Jaeger; then SA_OTEL_EXPORTER=otlp make demo and open http://localhost:16686
 ```
@@ -62,6 +62,7 @@ failing the ticket. Change one stage at a time via `SA_<STAGE>__MODEL` / `__EFFO
 | PII never reaches the model | `redaction.py` | cards (Luhn-checked), SSNs, phones, IBANs, passwords, third-party emails replaced with stable placeholders; originals are never written to the DB; a gate blocks any reply containing a placeholder |
 | Typed stage contracts | `models.py` | Pydantic models double as Claude structured-output schemas; the SDK validates every response, one retry on schema failure |
 | Read-only research tools | `knowledge/tools.py` | tools are scoped to the sender (no cross-customer lookups); every call is recorded to the audit log |
+| Retrieval, measured | `knowledge/kb.py`, `knowledge/vectorstore.py`, `knowledge/embeddings.py` | BM25 in-process (default) or **hybrid on Weaviate** (its BM25 + vector fusion, self-provided vectors from **Voyage AI** or a key-free fallback); embedded Weaviate for dev/tests, a server in compose; the retrieval eval scores both on the same 24 queries every run |
 | Grounding | `pipeline/orchestrator.py`, `llm/prompts.py` | draft may only use the research brief; a judge scores every claim against it; gates require a KB citation |
 | Policy gates | `pipeline/gates.py`, `data/policy.yaml` | rules are data, versioned; precedence reject > escalate > needs_approval > auto_send; **fail closed** (missing judge, unknown action → human); refunds capped by policy *and* by order total; refusals and injection attempts always reviewed |
 | Side effects | `orchestrator._release` | proposed actions (refunds, cancellations) execute only after gates pass or a human approves; refund/replace caps and always-human actions in policy |
@@ -81,7 +82,7 @@ support-agent/
 │   ├── config.py            pydantic-settings; per-stage model/effort; pricing table
 │   ├── redaction.py         PII redaction before the model sees anything
 │   ├── ingest/              .eml / JSON parsing, file inbox, IMAP source
-│   ├── knowledge/           BM25 KB over data/kb/*.md, mock CRM, tool definitions
+│   ├── knowledge/           KB (BM25 or Weaviate hybrid), embeddings, mock CRM, tool definitions
 │   ├── llm/                 provider protocol, Claude provider, offline provider, prompts
 │   ├── pipeline/            gates.py (rule engine) and orchestrator.py
 │   ├── store/db.py          SQLite: tickets, audit events, usage, outbox, approvals

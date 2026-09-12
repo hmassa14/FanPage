@@ -33,9 +33,21 @@ When the model stops calling tools, one more call with `tool_choice: none` and a
 `output_format` produces the brief: customer context, order context, verbatim policy
 citations, findings with sources, open questions, and a recommended resolution.
 
-Why not embeddings: for a policy corpus of a few dozen sections BM25 is deterministic,
-dependency-free, and unit-testable. The `KnowledgeBase.search` contract is the only thing to
-replace when the corpus outgrows it.
+Two retrievers sit behind the same `KnowledgeBase.search` contract, selected by `SA_RETRIEVER`:
+
+* **bm25** (default): in-process, with a light stemmer. Deterministic, dependency-free,
+  unit-testable. Right-sized for a policy corpus of a few dozen sections.
+* **hybrid**: the same chunks indexed in **Weaviate** with self-provided vectors; Weaviate
+  runs its own BM25 and a vector search and fuses them (relative-score fusion, `alpha`
+  0 = keyword, 1 = vector). Vectors come from an `Embedder`: **Voyage AI** (Anthropic's
+  recommended embeddings partner, cached on disk) or a key-free hashed-trigram fallback
+  used only to keep the plumbing testable. Weaviate runs embedded in-process for dev and
+  tests, or as a server (compose, Weaviate Cloud) in production. Sync is idempotent:
+  objects are keyed by uuid5(ref) with a content hash, so start-up on an unchanged corpus
+  writes nothing.
+
+The retrieval eval (`evals/retrieval.jsonl`) scores both on the same queries every run, so
+the choice is a number, not an opinion. See `docs/evals.md`.
 
 ### 5. Draft (`DraftReply`)
 Writes only from the brief. The important field is `proposed_actions`: every side effect the

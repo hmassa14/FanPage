@@ -60,6 +60,26 @@ class Settings(BaseSettings):
     support_address: str = "support@northwind-outfitters.example"
     agent_signature: str = "Northwind Outfitters Support"
 
+    # --- retrieval ------------------------------------------------------------
+    retriever: Literal["bm25", "hybrid"] = Field(
+        default="bm25", description="hybrid = Weaviate BM25 + vector fusion over the same chunks."
+    )
+    hybrid_alpha: float = Field(default=0.5, description="0 = keyword only, 1 = vector only.")
+    embedder: Literal["voyage", "hash"] = Field(
+        default="hash", description="voyage needs VOYAGE_API_KEY; hash is a key-free lexical fallback."
+    )
+    voyage_model: str = "voyage-3.5"
+    voyage_api_key: str | None = Field(default=None, validation_alias="VOYAGE_API_KEY")
+    embedding_cache_dir: Path = PROJECT_ROOT / "data" / ".cache"
+    weaviate_mode: Literal["embedded", "remote"] = "embedded"
+    weaviate_data_dir: Path = PROJECT_ROOT / "data" / ".weaviate"
+    weaviate_embedded_port: int = 8079
+    weaviate_embedded_grpc_port: int = 50050
+    weaviate_url: str = "http://localhost:8080"
+    weaviate_grpc_host: str | None = None
+    weaviate_grpc_port: int = 50051
+    weaviate_api_key: str | None = None
+
     # --- storage / data -----------------------------------------------------
     db_path: Path = PROJECT_ROOT / "data" / "support_agent.sqlite3"
     kb_dir: Path = PROJECT_ROOT / "data" / "kb"

@@ -13,6 +13,11 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from .embeddings import Embedder
+    from .vectorstore import WeaviateIndex
 
 _TOKEN = re.compile(r"[a-z0-9]+")
 _STOP = {
@@ -113,7 +118,21 @@ def _parse_doc(path: Path) -> list[Chunk]:
 
 
 class KnowledgeBase:
-    def __init__(self, kb_dir: Path, k1: float = 1.5, b: float = 0.75) -> None:
+    def __init__(
+        self,
+        kb_dir: Path,
+        k1: float = 1.5,
+        b: float = 0.75,
+        *,
+        retriever: Literal["bm25", "hybrid"] = "bm25",
+        index: WeaviateIndex | None = None,
+        embedder: Embedder | None = None,
+        alpha: float = 0.5,
+    ) -> None:
+        self.retriever = retriever
+        self.index, self.embedder, self.alpha = index, embedder, alpha
+        if retriever == "hybrid" and not (index and embedder):
+            raise ValueError("hybrid retrieval needs a WeaviateIndex and an Embedder")
         self.chunks: list[Chunk] = []
         for path in sorted(kb_dir.glob("*.md")):
             self.chunks.extend(_parse_doc(path))
@@ -129,7 +148,31 @@ class KnowledgeBase:
         n = len(self._docs)
         self._idf = {t: math.log(1 + (n - c + 0.5) / (c + 0.5)) for t, c in df.items()}
 
+        self._by_ref = {c.ref: c for c in self.chunks}
+        if self.index and self.embedder:
+            self.index.sync(self.chunks, self.embedder)
+
+    @property
+    def retriever_name(self) -> str:
+        if self.retriever == "hybrid" and self.embedder:
+            return f"hybrid(weaviate, {self.embedder.name}, alpha={self.alpha})"
+        return "bm25"
+
     def search(self, query: str, top_k: int = 4) -> list[tuple[Chunk, float]]:
+        if self.retriever == "hybrid":
+            return self.search_hybrid(query, top_k)
+        return self.search_bm25(query, top_k)
+
+    def search_hybrid(
+        self, query: str, top_k: int = 4, alpha: float | None = None
+    ) -> list[tuple[Chunk, float]]:
+        assert self.index and self.embedder
+        hits = self.index.hybrid(
+            query, self.embedder.embed_query(query), self.alpha if alpha is None else alpha, top_k
+        )
+        return [(self._by_ref[ref], score) for ref, score in hits if ref in self._by_ref]
+
+    def search_bm25(self, query: str, top_k: int = 4) -> list[tuple[Chunk, float]]:
         q = tokenize(query)
         scores: list[tuple[Chunk, float]] = []
         for i, chunk in enumerate(self.chunks):
@@ -151,6 +194,10 @@ class KnowledgeBase:
 
     def get_doc(self, doc_id: str) -> list[Chunk]:
         return [c for c in self.chunks if c.doc_id == doc_id]
+
+    def close(self) -> None:
+        if self.index:
+            self.index.close()
 
     def doc_ids(self) -> list[str]:
         seen: dict[str, None] = {}

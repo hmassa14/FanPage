@@ -91,7 +91,10 @@ def run(dataset: Path, trials: int, sent_dir: Path) -> dict[str, Any]:
                 settings, store=Store(":memory:"), sender=FileSender(settings.support_address, sent_dir)
             )
             provider_name, policy_version = pipeline.provider.name, pipeline.policy.version
-            runs.append(run_trial(pipeline, case))
+            try:
+                runs.append(run_trial(pipeline, case))
+            finally:
+                pipeline.close()
         c = sum(r["passed"] for r in runs)
         results.append(
             {

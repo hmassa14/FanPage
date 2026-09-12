@@ -33,9 +33,11 @@
   model/tokens/cost) to any OTLP backend: `SA_OTEL_EXPORTER=otlp`, `SA_OTEL_ENDPOINT=...`.
   Jaeger ships in compose; point it at their Tempo/Honeycomb/Datadog instead. JSON logs carry
   the OTel trace id. `/metrics` is Prometheus text. `/scorecard` is the ops page.
-* **Retrieval:** the BM25 knowledge base is fine for a policy corpus. For a full help center
-  put their existing search (or a vector index) behind `KnowledgeBase.search`; the contract
-  does not change.
+* **Retrieval:** `SA_RETRIEVER=bm25` (in-process) or `hybrid` (Weaviate, in compose or
+  Weaviate Cloud via `SA_WEAVIATE_URL` + `SA_WEAVIATE_API_KEY`). Hybrid wants real embeddings:
+  `SA_EMBEDDER=voyage` with `VOYAGE_API_KEY`; vectors are cached on disk so re-indexing is
+  free. The retrieval eval decides which one ships; for a help center of thousands of
+  articles, hybrid is the expected answer.
 * **Kill switch:** `SA_SENDER=file` turns the system into "draft everything, send nothing"
   with no code change. Set `auto_send.allowed_categories: []` in `policy.yaml` to route
   100% to human approval while keeping the pipeline warm.

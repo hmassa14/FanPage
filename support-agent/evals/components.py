@@ -52,6 +52,11 @@ def _tickets(settings: Settings, cases: list[dict[str, Any]], sent_dir: Path):
     return out
 
 
+def close_runs(runs) -> None:
+    for _, _, p in runs:
+        p.close()
+
+
 # ---- triage ------------------------------------------------------------------------- #
 def score_triage(runs) -> dict[str, Any]:
     labeled = [(c, t) for c, t, _ in runs if c.get("expect_category") and t.triage]
@@ -67,13 +72,17 @@ def score_triage(runs) -> dict[str, Any]:
 
 
 # ---- retrieval --------------------------------------------------------------------- #
-def score_retrieval(kb: KnowledgeBase, dataset: Path, k: int = 3) -> dict[str, Any]:
+def score_retrieval(
+    kb: KnowledgeBase, dataset: Path, k: int = 3, method: str | None = None
+) -> dict[str, Any]:
+    """Score one retriever. `method` = "bm25" | "hybrid" | None (the KB's configured one)."""
     queries = [json.loads(line) for line in dataset.read_text(encoding="utf-8").splitlines() if line.strip()]
+    search = {"bm25": kb.search_bm25, "hybrid": kb.search_hybrid}.get(method or kb.retriever, kb.search)
     hit1 = hitk = doc_hitk = 0
     rr_sum = 0.0
     misses = []
     for q in queries:
-        hits = kb.search(q["query"], top_k=k)
+        hits = search(q["query"], top_k=k)
         ranks = [
             i
             for i, (c, _) in enumerate(hits)
@@ -93,7 +102,9 @@ def score_retrieval(kb: KnowledgeBase, dataset: Path, k: int = 3) -> dict[str, A
             )
         doc_hitk += any(c.doc_id == q["expect_doc"] for c, _ in hits)
     n = len(queries)
+    name = "bm25" if (method or kb.retriever) == "bm25" else kb.retriever_name
     return {
+        "retriever": name,
         "n": n,
         "k": k,
         "recall_at_1": round(hit1 / n, 3),
@@ -102,6 +113,15 @@ def score_retrieval(kb: KnowledgeBase, dataset: Path, k: int = 3) -> dict[str, A
         "mrr": round(rr_sum / n, 3),
         "misses": misses,
     }
+
+
+def score_retrievers(kb: KnowledgeBase, dataset: Path, k: int = 3) -> dict[str, Any]:
+    """BM25 always; hybrid too when the KB has a vector index. Same queries, side by side."""
+    out: dict[str, Any] = {"bm25": score_retrieval(kb, dataset, k, method="bm25")}
+    if kb.index and kb.embedder:
+        out["hybrid"] = score_retrieval(kb, dataset, k, method="hybrid")
+    out["configured"] = kb.retriever
+    return out
 
 
 # ---- draft ---------------------------------------------------------------------------- #
@@ -200,14 +220,17 @@ def run_components(dataset: Path, retrieval_dataset: Path, sent_dir: Path) -> di
     cases = [json.loads(line) for line in dataset.read_text(encoding="utf-8").splitlines() if line.strip()]
     runs = _tickets(settings, cases, sent_dir)
     kb = runs[0][2].kb
-    return {
-        "provider": runs[0][2].provider.name,
-        "triage": score_triage(runs),
-        "retrieval": score_retrieval(kb, retrieval_dataset),
-        "draft": score_draft(runs),
-        "judge": score_judge(runs),
-        "gates": score_gates(runs, settings.policy_file),
-    }
+    try:
+        return {
+            "provider": runs[0][2].provider.name,
+            "triage": score_triage(runs),
+            "retrieval": score_retrievers(kb, retrieval_dataset),
+            "draft": score_draft(runs),
+            "judge": score_judge(runs),
+            "gates": score_gates(runs, settings.policy_file),
+        }
+    finally:
+        close_runs(runs)
 
 
 def render_scorecard(sc: dict[str, Any], e2e: dict[str, Any] | None) -> str:
@@ -219,12 +242,17 @@ def render_scorecard(sc: dict[str, Any], e2e: dict[str, Any] | None) -> str:
             t["accuracy"],
             f"{t['n']} labeled; confusions: {len(t['confusions'])}",
         ),
-        (
-            "retrieval",
-            "recall@1 / recall@3 / MRR",
-            f"{r['recall_at_1']} / {r['recall_at_3']} / {r['mrr']}",
-            f"{r['n']} queries; doc-level recall@3 {r['doc_recall_at_3']}",
-        ),
+        *[
+            (
+                f"retrieval ({name})",
+                "recall@1 / recall@3 / MRR",
+                f"{rr['recall_at_1']} / {rr['recall_at_3']} / {rr['mrr']}",
+                f"{rr['retriever']}; {rr['n']} queries; doc-level recall@3 {rr['doc_recall_at_3']}"
+                + ("; configured" if name == r["configured"] else ""),
+            )
+            for name, rr in r.items()
+            if name != "configured"
+        ],
         (
             "draft",
             "rubric mean",
@@ -265,10 +293,11 @@ def render_scorecard(sc: dict[str, Any], e2e: dict[str, Any] | None) -> str:
     out += [f"| {a} | {b} | **{c}** | {n} |" for a, b, c, n in rows]
     out += ["", "## Gate reason histogram", "", "| rule | count |", "|---|---|"]
     out += [f"| {k} | {v} |" for k, v in g["reason_histogram"].items()]
-    if r["misses"]:
-        out += ["", "## Retrieval misses", ""] + [
-            f"- `{m['query']}` expected {m['expected']}, got {m['got']}" for m in r["misses"]
-        ]
+    for name, rr in r.items():
+        if name != "configured" and rr["misses"]:
+            out += ["", f"## Retrieval misses ({name})", ""] + [
+                f"- `{m['query']}` expected {m['expected']}, got {m['got']}" for m in rr["misses"]
+            ]
     if t["confusions"]:
         out += ["", "## Triage confusions", ""] + [
             f"- expected {c['expected']}, got {c['got']} ×{c['n']}" for c in t["confusions"]

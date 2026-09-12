@@ -8,9 +8,13 @@ services:
       SA_OUTBOX_DIR: /data/outbox
       SA_OTEL_EXPORTER: otlp
       SA_OTEL_ENDPOINT: http://jaeger:4318
+      SA_RETRIEVER: hybrid
+      SA_WEAVIATE_MODE: remote
+      SA_WEAVIATE_URL: http://weaviate:8080
+      SA_WEAVIATE_GRPC_HOST: weaviate
     volumes: ["agent-data:/data"]
     ports: ["8000:8000"]
-    depends_on: [jaeger]
+    depends_on: [jaeger, weaviate]
   worker:
     build: .
     env_file: .env
@@ -20,9 +24,26 @@ services:
       SA_OUTBOX_DIR: /data/outbox
       SA_OTEL_EXPORTER: otlp
       SA_OTEL_ENDPOINT: http://jaeger:4318
+      SA_RETRIEVER: hybrid
+      SA_WEAVIATE_MODE: remote
+      SA_WEAVIATE_URL: http://weaviate:8080
+      SA_WEAVIATE_GRPC_HOST: weaviate
     volumes: ["agent-data:/data"]
     command: ["support-agent", "worker"]
-    depends_on: [api, jaeger]
+    depends_on: [api, jaeger, weaviate]
+  weaviate:
+    # Hybrid retrieval backend. Vectors are self-provided (Voyage or the hash fallback), so no
+    # vectorizer module is needed. Console at http://localhost:8080/v1/meta
+    image: semitechnologies/weaviate:1.30.5
+    command: ["--host", "0.0.0.0", "--port", "8080", "--scheme", "http"]
+    environment:
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: /var/lib/weaviate
+      DEFAULT_VECTORIZER_MODULE: none
+      CLUSTER_HOSTNAME: node1
+      DISABLE_TELEMETRY: "true"
+    volumes: ["weaviate-data:/var/lib/weaviate"]
+    ports: ["8080:8080", "50051:50051"]
   jaeger:
     # Trace UI at http://localhost:16686 ; accepts OTLP on 4318 (http) and 4317 (grpc)
     image: jaegertracing/all-in-one:1.62.0
@@ -31,3 +52,4 @@ services:
     ports: ["16686:16686", "4318:4318"]
 volumes:
   agent-data: {}
+  weaviate-data: {}
