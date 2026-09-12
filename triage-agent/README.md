@@ -7,6 +7,7 @@ One small repo that covers the three prep items as a single system:
 | Function-calling loop, multi-turn, official Anthropic SDK | `agent.py` (manual loop), `agent_runner.py` (SDK `tool_runner`) |
 | Pydantic-enforced JSON at every boundary | `schemas.py` (tool inputs, tool outputs, the decision) |
 | Eval harness: per-class P/R/F1, tool pass-rate, pass^k | `eval.py` + `scoring.py` over 12 labelled cases in `cases.jsonl` |
+| OpenTelemetry traces (GenAI semantic conventions) | `tracing.py`; spans opened from `agent.py` and `eval.py` |
 
 The agent reads a support ticket, calls `lookup_customer` and (for anything
 broken) `search_incidents`, and returns a `TriageDecision`: category, priority,
@@ -16,7 +17,7 @@ broken) `search_incidents`, and returns a `TriageDecision`: category, priority,
 
 ```bash
 pip install -r requirements.txt
-python -m pytest -q                      # 19 offline tests, no key needed
+python -m pytest -q                      # 22 offline tests, no key needed
 
 python eval.py --client oracle           # harness self-check: everything must read 1.000
 python eval.py --client null             # constant answer: must read ~0.25 (majority baseline)
@@ -30,6 +31,12 @@ echo '{"customer_id":"cust_004","subject":"Not renewing","body":"..."}' | python
 ```
 
 Model defaults to `claude-opus-5`; override with `TRIAGE_MODEL=...` or `--model`.
+
+Tracing is off by default. `TRIAGE_OTEL_EXPORTER=console` prints every span;
+`TRIAGE_OTEL_EXPORTER=otlp` sends them over OTLP http/protobuf to
+`OTEL_EXPORTER_OTLP_ENDPOINT` (default `http://localhost:4318`).
+`TRIAGE_OTEL_CAPTURE_CONTENT=1` adds tool arguments, tool results and the
+decision JSON to spans; off by default because tickets carry customer data.
 
 ## The loop, and the three ways it breaks
 
@@ -135,6 +142,7 @@ agent_runner.py  same agent via client.beta.messages.tool_runner
 fake_client.py   ScriptedClient / OracleClient / NullClient for offline runs
 scoring.py       P/R/F1, tool pass-rate, pass^k, pass@k
 eval.py          runner + report writer
+tracing.py       OpenTelemetry spans: invoke_agent, chat, execute_tool
 cases.jsonl      12 labelled tickets
-tests/           19 offline tests
+tests/           22 offline tests
 ```

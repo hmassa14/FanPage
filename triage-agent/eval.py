@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 import agent
+import tracing
 from agent import AgentError, triage
 from fake_client import NullClient, OracleClient
 from schemas import Ticket
@@ -56,7 +57,11 @@ def run_attempt(case: dict, rep: int, client: Any) -> dict:
     """Returns either {"ok": True, "row": ...} or {"ok": False, "error": ...}."""
     ticket = Ticket.model_validate(case["ticket"])
     try:
-        result = triage(ticket, client=client)
+        # one parent span per attempt so every trace carries the case id
+        with tracing.tracer.start_as_current_span(
+            "eval.attempt", attributes={"triage.case_id": case["id"], "triage.rep": rep}
+        ):
+            result = triage(ticket, client=client)
     except AgentError as exc:
         return {"ok": False, "error": {"case_id": case["id"], "rep": rep, "kind": exc.kind, "detail": exc.detail}}
     except Exception as exc:  # anything else is a harness bug; still don't score it as wrong
@@ -132,6 +137,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.model:
         agent.MODEL = args.model
+    tracing.configure()  # TRIAGE_OTEL_EXPORTER=console|otlp; off by default
     client = make_client(args.client, cases)
     out = args.out or HERE / "runs" / time.strftime("%Y%m%d-%H%M%S")
     out.mkdir(parents=True, exist_ok=True)

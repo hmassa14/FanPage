@@ -13,7 +13,8 @@ can build it from an empty directory and understand every line.
 - `strict: true` tool inputs and an `output_config.format` decision, both generated from Pydantic models with no hand-written JSON Schema
 - Governance controls a production loop needs: bounded turns, refusal and truncation handling, tool errors returned as values, served-model tracking, full transcripts, a `needs_human` escalation flag
 - Eval harness over 12 hand-labelled tickets reporting per-class precision/recall/F1, tool pass-rate, pass rate, and pass^k across repetitions
-- Offline fakes (scripted, oracle, null) so 19 tests and the harness self-checks run with no API key
+- OpenTelemetry traces following the GenAI semantic conventions: one `invoke_agent` span per ticket, a `chat` span per API call with token usage, an `execute_tool` span per tool call, content capture off by default
+- Offline fakes (scripted, oracle, null) so 22 tests and the harness self-checks run with no API key
 
 **What you'll learn**
 
@@ -22,6 +23,7 @@ can build it from an empty directory and understand every line.
 3. Which controls turn a loop into something you can run unattended, and where each one lives in the code
 4. How to design a small eval set that can actually detect a regression, and how to prove the harness works before spending money on it
 5. When to let the SDK drive the loop and when to own it
+6. How to get OpenTelemetry traces out of the agent, what goes on each span, and how the same signals come out of Claude Code itself
 
 ## Prerequisites
 
@@ -36,7 +38,8 @@ can build it from an empty directory and understand every line.
    ```bash
    mkdir triage-agent && cd triage-agent
    python3 -m venv .venv && source .venv/bin/activate
-   pip install "anthropic>=1.5,<2" "pydantic>=2.7,<3" pytest
+   pip install "anthropic>=1.5,<2" "pydantic>=2.7,<3" pytest \
+       "opentelemetry-api>=1.44,<2" "opentelemetry-sdk>=1.44,<2" "opentelemetry-exporter-otlp-proto-http>=1.44,<2"
    ```
 
 2. Add the files in the order they appear under **How it's built** below (or clone the finished directory).
@@ -44,7 +47,7 @@ can build it from an empty directory and understand every line.
 3. Run the offline tests:
 
    ```bash
-   python -m pytest -q          # 19 passed
+   python -m pytest -q          # 22 passed
    ```
 
 4. Prove the harness before paying for it:
@@ -63,6 +66,7 @@ can build it from an empty directory and understand every line.
    ```
 
 The model defaults to `claude-opus-5`. Override with `TRIAGE_MODEL=...` or `--model`.
+Tracing is off until `TRIAGE_OTEL_EXPORTER=console` or `=otlp` is set (Part 11).
 
 ## Project Structure
 
@@ -77,11 +81,13 @@ triage-agent/
 ├── cases.jsonl        12 hand-labelled tickets with required_tools
 ├── scoring.py         precision/recall/F1, tool pass-rate, pass^k, pass@k
 ├── eval.py            runner: results.jsonl, errors.jsonl, report.json
+├── tracing.py         OpenTelemetry spans: invoke_agent, chat, execute_tool
 └── tests/
     ├── conftest.py
     ├── test_tools.py    registry is strict-compatible; errors are values
     ├── test_loop.py     the three ways the loop breaks, plus failure classes
-    └── test_scoring.py  oracle = 1.0, null = baseline, planted failures, pass^k
+    ├── test_scoring.py  oracle = 1.0, null = baseline, planted failures, pass^k
+    └── test_tracing.py  span tree, attributes, content opt-in, error status
 ```
 
 ## How It Works
@@ -152,6 +158,9 @@ Record the pins first:
 anthropic>=1.5,<2
 pydantic>=2.7,<3
 pytest>=8
+opentelemetry-api>=1.44,<2
+opentelemetry-sdk>=1.44,<2
+opentelemetry-exporter-otlp-proto-http>=1.44,<2
 ```
 
 ### Part 1: `schemas.py`, the contract before the loop
@@ -608,6 +617,7 @@ from pydantic import ValidationError
 
 from schemas import DECISION_SCHEMA, Ticket, TriageDecision
 from tools import TOOL_DEFINITIONS, execute
+import tracing
 
 MODEL = os.environ.get("TRIAGE_MODEL", "claude-opus-5")
 MAX_TOKENS = 4096
@@ -682,7 +692,20 @@ def _request_params() -> dict:
 
 
 def triage(ticket: Ticket, client: Any | None = None, max_turns: int = MAX_TURNS) -> TriageResult:
-    """Run the loop once for one ticket. Raises AgentError on any non-scorable outcome."""
+    """Run the loop once for one ticket. Raises AgentError on any non-scorable outcome.
+
+    Wrapped in one `invoke_agent` span; every API call and tool call below
+    opens a child span. See tracing.py for what gets recorded.
+    """
+    with tracing.agent_span() as span:
+        try:
+            return _triage(ticket, client, max_turns, span)
+        except AgentError as exc:
+            tracing.record_failure(span, exc.kind, exc.detail)
+            raise
+
+
+def _triage(ticket: Ticket, client: Any | None, max_turns: int, root: Any) -> TriageResult:
     client = client or anthropic.Anthropic()
     messages: list[dict] = [{"role": "user", "content": ticket.render()}]
     tool_calls: list[ToolCall] = []
@@ -691,12 +714,16 @@ def triage(ticket: Ticket, client: Any | None = None, max_turns: int = MAX_TURNS
     started = time.perf_counter()
 
     for turn in range(1, max_turns + 1):
-        try:
-            response = client.messages.create(**_request_params(), messages=messages)
-        except anthropic.APIStatusError as exc:  # 4xx/5xx after the SDK's own retries
-            raise AgentError("api_error", f"{exc.status_code}: {exc.message}") from exc
-        except anthropic.APIConnectionError as exc:
-            raise AgentError("connection_error", str(exc)) from exc
+        with tracing.chat_span(MODEL, MAX_TOKENS) as span:
+            try:
+                response = client.messages.create(**_request_params(), messages=messages)
+            except anthropic.APIStatusError as exc:  # 4xx/5xx after the SDK's own retries
+                tracing.record_failure(span, "api_error", str(exc.status_code))
+                raise AgentError("api_error", f"{exc.status_code}: {exc.message}") from exc
+            except anthropic.APIConnectionError as exc:
+                tracing.record_failure(span, "connection_error", str(exc))
+                raise AgentError("connection_error", str(exc)) from exc
+            tracing.record_response(span, response)
 
         in_tok += response.usage.input_tokens
         out_tok += response.usage.output_tokens
@@ -717,7 +744,9 @@ def triage(ticket: Ticket, client: Any | None = None, max_turns: int = MAX_TURNS
             for block in response.content:
                 if block.type != "tool_use":
                     continue
-                outcome = execute(block.name, block.input)
+                with tracing.tool_span(block.name, block.id, dict(block.input)) as span:
+                    outcome = execute(block.name, block.input)
+                    tracing.record_tool_outcome(span, outcome.is_error, outcome.content)
                 tool_calls.append(ToolCall(block.id, block.name, dict(block.input), outcome.is_error, outcome.content))
                 results.append(
                     {
@@ -744,6 +773,7 @@ def triage(ticket: Ticket, client: Any | None = None, max_turns: int = MAX_TURNS
             raise AgentError("invalid_output", f"{exc.error_count()} validation errors; raw={text[:200]!r}") from exc
 
         messages.append({"role": "assistant", "content": response.content})
+        tracing.record_decision(root, decision, turn, text)
         return TriageResult(
             decision=decision,
             tool_calls=tool_calls,
@@ -763,6 +793,7 @@ if __name__ == "__main__":
     import json
     import sys
 
+    tracing.configure()  # TRIAGE_OTEL_EXPORTER=console|otlp to see spans
     ticket = Ticket.model_validate_json(sys.stdin.read())
     result = triage(ticket)
     print(json.dumps(result.decision.model_dump(), indent=2))
@@ -1061,6 +1092,7 @@ is the checklist to carry to the next agent.
 | Full transcript kept | Debugging a surprising score by re-running it | `TriageResult.messages` | `transcript` field per row |
 | Human escalation flag | Automation replying where a person must | `TriageDecision.needs_human` | part of the decision schema |
 | Stable request prefix | Cache misses from volatile content ahead of the messages | `_request_params()` | `test_request_shape_has_strict_tools_and_output_format` |
+| Traces with content off by default | Customer text leaking into an observability backend | `tracing.py` `capture_content()` | `test_content_capture_is_opt_in` |
 
 > **Production note:** Two controls are deliberately left out here and worth
 > knowing. Server-side refusal fallbacks (`fallbacks` on the beta client)
@@ -1372,6 +1404,7 @@ from pathlib import Path
 from typing import Any
 
 import agent
+import tracing
 from agent import AgentError, triage
 from fake_client import NullClient, OracleClient
 from schemas import Ticket
@@ -1404,7 +1437,11 @@ def run_attempt(case: dict, rep: int, client: Any) -> dict:
     """Returns either {"ok": True, "row": ...} or {"ok": False, "error": ...}."""
     ticket = Ticket.model_validate(case["ticket"])
     try:
-        result = triage(ticket, client=client)
+        # one parent span per attempt so every trace carries the case id
+        with tracing.tracer.start_as_current_span(
+            "eval.attempt", attributes={"triage.case_id": case["id"], "triage.rep": rep}
+        ):
+            result = triage(ticket, client=client)
     except AgentError as exc:
         return {"ok": False, "error": {"case_id": case["id"], "rep": rep, "kind": exc.kind, "detail": exc.detail}}
     except Exception as exc:  # anything else is a harness bug; still don't score it as wrong
@@ -1480,6 +1517,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.model:
         agent.MODEL = args.model
+    tracing.configure()  # TRIAGE_OTEL_EXPORTER=console|otlp; off by default
     client = make_client(args.client, cases)
     out = args.out or HERE / "runs" / time.strftime("%Y%m%d-%H%M%S")
     out.mkdir(parents=True, exist_ok=True)
@@ -1672,7 +1710,7 @@ def test_search_incidents_matches_keywords():
 ```
 
 ```bash
-python -m pytest -q     # 19 passed
+python -m pytest -q     # 22 passed
 ```
 
 ### Part 9: `agent_runner.py`, when the SDK drives the loop
@@ -1820,6 +1858,463 @@ prompt. The transcript is in the row. Most surprising scores are eval bugs,
 not facts about the model. When a change to the prompt is warranted, change
 one thing, re-run with the same reps, compare pass^k, keep or revert.
 
+### Part 11: `tracing.py`, OpenTelemetry traces from the agent
+
+**What we add.** One module that opens three kinds of span, a few lines in
+`agent.py` and `eval.py` that call it, and three tests against an in-memory
+exporter. Nothing talks to a collector until you ask.
+
+**Why traces when the transcript is already saved.** `results.jsonl` is the
+offline record: complete, per attempt, written after the fact. A trace is the
+live record: it shows the same run as a tree with timing, it crosses service
+boundaries (the web handler that received the ticket, the queue, this agent,
+the database behind `lookup_customer`), and it lands in whatever backend the
+rest of the system already uses. Production needs both. The transcript
+answers "what did the model see"; the trace answers "where did the 4 seconds
+go, and was it the model or the tool".
+
+**The span tree.** One ticket produces this:
+
+```
+eval.attempt  (triage.case_id=g1, triage.rep=0)          ← opened by eval.py
+└── invoke_agent triage                                  ← opened by agent.triage()
+    ├── chat claude-opus-5        finish_reasons=[tool_use]  in=1180 out=96
+    ├── execute_tool lookup_customer   tool.call.id=toolu_01…  is_error=false
+    ├── execute_tool search_incidents  tool.call.id=toolu_02…  is_error=false
+    └── chat claude-opus-5        finish_reasons=[end_turn]  in=1712 out=141
+        triage.decision.category=bug  triage.decision.priority=P0  triage.turns=2
+```
+
+Tool spans are siblings of the chat spans, not children of them, because the
+tool runs *between* API calls, in our process. That is what makes "model time
+versus tool time" readable straight off the waterfall.
+
+**Naming and attributes come from the OpenTelemetry GenAI semantic
+conventions**, not invented. They are still marked incubating, so the constants
+are imported from `opentelemetry.semconv._incubating.attributes.gen_ai_attributes`
+rather than typed as strings; when the names stabilise the import path
+changes and the values do not. What each span carries:
+
+| Span | `gen_ai.operation.name` | Attributes set |
+|---|---|---|
+| `invoke_agent triage` | `invoke_agent` | `gen_ai.agent.name`, `gen_ai.provider.name=anthropic`; on success `triage.turns`, `triage.decision.category`, `triage.decision.priority`, `triage.decision.needs_human`; on failure `error.type` = the `AgentError.kind` and status `ERROR` |
+| `chat {model}` (kind `CLIENT`) | `chat` | `gen_ai.request.model`, `gen_ai.request.max_tokens`; after the call `gen_ai.response.model`, `gen_ai.response.id`, `gen_ai.response.finish_reasons=[stop_reason]`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.usage.cache_read.input_tokens`, `gen_ai.usage.cache_creation.input_tokens` |
+| `execute_tool {name}` | `execute_tool` | `gen_ai.tool.name`, `gen_ai.tool.call.id` (the `tool_use` id), `gen_ai.tool.type=function`, `triage.tool.is_error`; status `ERROR` when the tool returned an error result |
+
+The `triage.*` names are ours. The convention is: standard attributes under
+`gen_ai.*`, application attributes under your own prefix, never a private
+name that collides with a future standard one.
+
+**Two design decisions that matter in production.**
+
+- **The loop imports the OpenTelemetry API, never the SDK.** With no
+  `TracerProvider` installed, `get_tracer()` returns a no-op and every
+  `start_as_current_span` costs nothing. The SDK (provider, processors,
+  exporters) is installed once at the entry point by `tracing.configure()`.
+  This is the standard split: libraries instrument with the API, applications
+  configure the SDK. It is also why the tests can install an in-memory
+  exporter and the harness can run with tracing off.
+- **Content is not recorded unless asked.** Tickets carry customer text, and
+  `lookup_customer` returns revenue. By default spans carry ids, names,
+  counts, and outcomes. `TRIAGE_OTEL_CAPTURE_CONTENT=1` adds
+  `gen_ai.tool.call.arguments`, `gen_ai.tool.call.result`, and the decision
+  JSON as `gen_ai.output.messages`. Claude Code takes the same posture with
+  its own telemetry (`OTEL_LOG_USER_PROMPTS`, `OTEL_LOG_TOOL_CONTENT`, off by
+  default), and it is the right default for any agent whose inputs are not
+  yours.
+
+```python
+"""OpenTelemetry tracing for the agent.
+
+Three span kinds, following the OpenTelemetry GenAI semantic conventions
+(attribute names come from `opentelemetry-semantic-conventions`, incubating):
+
+    invoke_agent triage                 one per triage() call        (INTERNAL)
+    ├── chat claude-opus-5              one per messages.create()    (CLIENT)
+    ├── execute_tool lookup_customer    one per tool call            (INTERNAL)
+    ├── execute_tool search_incidents
+    └── chat claude-opus-5
+
+The loop in agent.py only touches the OpenTelemetry *API* through the
+helpers below. With no provider configured the API is a no-op, so tracing
+costs nothing until `configure()` runs at an entry point (eval.py, agent.py
+__main__) or a test installs an in-memory exporter.
+
+Content (prompts, tool arguments, tool results, the decision JSON) is NOT
+recorded by default: tickets carry customer data. Set
+TRIAGE_OTEL_CAPTURE_CONTENT=1 to opt in, the same posture Claude Code takes
+with its OTEL_LOG_* flags.
+"""
+
+from __future__ import annotations
+
+import atexit
+import json
+import os
+from contextlib import contextmanager
+from typing import Any, Iterator
+
+from opentelemetry import trace
+from opentelemetry.semconv._incubating.attributes import gen_ai_attributes as ga
+from opentelemetry.trace import SpanKind, Status, StatusCode
+
+AGENT_NAME = "triage"
+PROVIDER = ga.GenAiProviderNameValues.ANTHROPIC.value  # "anthropic"
+
+tracer = trace.get_tracer("triage-agent")
+
+
+def capture_content() -> bool:
+    return os.environ.get("TRIAGE_OTEL_CAPTURE_CONTENT", "") == "1"
+
+
+# --------------------------------------------------------------------------- #
+# Setup (call once, at an entry point)
+# --------------------------------------------------------------------------- #
+
+
+def configure(exporter: str | None = None, service_name: str = "triage-agent") -> Any:
+    """Install a TracerProvider. exporter: "none" (default) | "console" | "otlp".
+
+    "otlp" sends http/protobuf to OTEL_EXPORTER_OTLP_ENDPOINT (default
+    http://localhost:4318), honouring OTEL_EXPORTER_OTLP_HEADERS. Returns the
+    provider, or None when tracing stays off.
+    """
+    exporter = exporter or os.environ.get("TRIAGE_OTEL_EXPORTER", "none")
+    if exporter == "none":
+        return None
+
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter, SimpleSpanProcessor
+
+    provider = TracerProvider(resource=Resource.create({"service.name": service_name}))
+    if exporter == "console":
+        provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
+    elif exporter == "otlp":
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+    else:
+        raise ValueError(f"unknown exporter {exporter!r}; use none, console, or otlp")
+
+    trace.set_tracer_provider(provider)
+    atexit.register(provider.shutdown)  # flush the batch on exit
+    return provider
+
+
+# --------------------------------------------------------------------------- #
+# Spans the loop opens
+# --------------------------------------------------------------------------- #
+
+
+@contextmanager
+def agent_span() -> Iterator[trace.Span]:
+    with tracer.start_as_current_span(
+        f"invoke_agent {AGENT_NAME}",
+        kind=SpanKind.INTERNAL,
+        attributes={
+            ga.GEN_AI_OPERATION_NAME: ga.GenAiOperationNameValues.INVOKE_AGENT.value,
+            ga.GEN_AI_AGENT_NAME: AGENT_NAME,
+            ga.GEN_AI_PROVIDER_NAME: PROVIDER,
+        },
+    ) as span:
+        yield span
+
+
+@contextmanager
+def chat_span(model: str, max_tokens: int) -> Iterator[trace.Span]:
+    with tracer.start_as_current_span(
+        f"chat {model}",
+        kind=SpanKind.CLIENT,
+        attributes={
+            ga.GEN_AI_OPERATION_NAME: ga.GenAiOperationNameValues.CHAT.value,
+            ga.GEN_AI_PROVIDER_NAME: PROVIDER,
+            ga.GEN_AI_REQUEST_MODEL: model,
+            ga.GEN_AI_REQUEST_MAX_TOKENS: max_tokens,
+        },
+    ) as span:
+        yield span
+
+
+def record_response(span: trace.Span, response: Any) -> None:
+    """Attach what the API told us about the call. Cheap, no content."""
+    span.set_attribute(ga.GEN_AI_RESPONSE_MODEL, response.model)
+    span.set_attribute(ga.GEN_AI_RESPONSE_FINISH_REASONS, [response.stop_reason])
+    if getattr(response, "id", None):
+        span.set_attribute(ga.GEN_AI_RESPONSE_ID, response.id)
+    usage = response.usage
+    span.set_attribute(ga.GEN_AI_USAGE_INPUT_TOKENS, usage.input_tokens)
+    span.set_attribute(ga.GEN_AI_USAGE_OUTPUT_TOKENS, usage.output_tokens)
+    for attr, name in (
+        (ga.GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS, "cache_read_input_tokens"),
+        (ga.GEN_AI_USAGE_CACHE_CREATION_INPUT_TOKENS, "cache_creation_input_tokens"),
+    ):
+        value = getattr(usage, name, None)
+        if value is not None:
+            span.set_attribute(attr, value)
+
+
+@contextmanager
+def tool_span(name: str, call_id: str, arguments: dict) -> Iterator[trace.Span]:
+    attributes = {
+        ga.GEN_AI_OPERATION_NAME: ga.GenAiOperationNameValues.EXECUTE_TOOL.value,
+        ga.GEN_AI_TOOL_NAME: name,
+        ga.GEN_AI_TOOL_CALL_ID: call_id,
+        ga.GEN_AI_TOOL_TYPE: "function",
+    }
+    if capture_content():
+        attributes[ga.GEN_AI_TOOL_CALL_ARGUMENTS] = json.dumps(arguments)
+    with tracer.start_as_current_span(f"execute_tool {name}", kind=SpanKind.INTERNAL, attributes=attributes) as span:
+        yield span
+
+
+def record_tool_outcome(span: trace.Span, is_error: bool, content: str) -> None:
+    span.set_attribute("triage.tool.is_error", is_error)
+    if capture_content():
+        span.set_attribute(ga.GEN_AI_TOOL_CALL_RESULT, content)
+    if is_error:
+        span.set_status(Status(StatusCode.ERROR, content[:200]))
+
+
+def record_decision(span: trace.Span, decision: Any, turns: int, raw_text: str) -> None:
+    span.set_attribute("triage.turns", turns)
+    span.set_attribute("triage.decision.category", decision.category)
+    span.set_attribute("triage.decision.priority", decision.priority)
+    span.set_attribute("triage.decision.needs_human", decision.needs_human)
+    if capture_content():
+        span.set_attribute(ga.GEN_AI_OUTPUT_MESSAGES, raw_text)
+
+
+def record_failure(span: trace.Span, kind: str, detail: str) -> None:
+    span.set_attribute("error.type", kind)
+    span.set_status(Status(StatusCode.ERROR, f"{kind}: {detail}"[:200]))
+```
+
+**The lines in the loop.** `triage()` becomes a thin wrapper that opens the
+root span and marks it on failure; the body moved to `_triage()` unchanged
+except for three `with` blocks. This is the whole diff to `agent.py`:
+
+```python
+def triage(ticket, client=None, max_turns=MAX_TURNS):
+    with tracing.agent_span() as span:
+        try:
+            return _triage(ticket, client, max_turns, span)
+        except AgentError as exc:
+            tracing.record_failure(span, exc.kind, exc.detail)
+            raise
+
+# inside _triage, around the API call:
+        with tracing.chat_span(MODEL, MAX_TOKENS) as span:
+            try:
+                response = client.messages.create(**_request_params(), messages=messages)
+            except anthropic.APIStatusError as exc:
+                tracing.record_failure(span, "api_error", str(exc.status_code))
+                raise AgentError("api_error", f"{exc.status_code}: {exc.message}") from exc
+            ...
+            tracing.record_response(span, response)
+
+# around each tool call:
+                with tracing.tool_span(block.name, block.id, dict(block.input)) as span:
+                    outcome = execute(block.name, block.input)
+                    tracing.record_tool_outcome(span, outcome.is_error, outcome.content)
+
+# on the way out:
+        tracing.record_decision(root, decision, turn, text)
+```
+
+`eval.py` opens one more span above it, `eval.attempt`, carrying
+`triage.case_id` and `triage.rep`, so a slow or failing trace in the backend
+can be matched to a row in `results.jsonl` without guessing. Context
+propagation is automatic: `start_as_current_span` on the attempt makes the
+agent span its child, and the thread pool is fine because each attempt opens
+and closes its own span on its own thread.
+
+**Test it.** The in-memory exporter is part of the OpenTelemetry SDK, so the
+span tree is assertable like any other output. The provider is installed once
+per test process; tracers acquired before that (the module-level `tracer` in
+`tracing.py`) are proxies that follow it.
+
+```python
+"""Span shape, checked with an in-memory exporter. No collector, no network."""
+
+import pytest
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import StatusCode
+
+from agent import MODEL, AgentError, triage
+from fake_client import ScriptedClient, final_json, response, text_block, tool_use_block
+from schemas import Ticket
+
+EXPORTER = InMemorySpanExporter()
+_provider = TracerProvider()
+_provider.add_span_processor(SimpleSpanProcessor(EXPORTER))
+trace.set_tracer_provider(_provider)  # global, once; tracers acquired earlier are proxies and follow it
+
+TICKET = Ticket(customer_id="cust_001", subject="CSV export never finishes", body="exports time out")
+GOOD = {"category": "bug", "priority": "P0", "needs_human": True, "summary": "s", "evidence": ["e"]}
+
+
+@pytest.fixture(autouse=True)
+def _clear():
+    EXPORTER.clear()
+    yield
+
+
+def _spans():
+    return {s.name: s for s in EXPORTER.get_finished_spans()}
+
+
+def test_span_tree_for_a_two_tool_run(monkeypatch):
+    monkeypatch.delenv("TRIAGE_OTEL_CAPTURE_CONTENT", raising=False)
+    first = response(
+        [
+            tool_use_block("toolu_A", "lookup_customer", {"customer_id": "cust_001"}),
+            tool_use_block("toolu_B", "search_incidents", {"query": "csv export"}),
+        ],
+        "tool_use",
+    )
+    triage(TICKET, client=ScriptedClient([first, final_json(GOOD)]))
+
+    spans = EXPORTER.get_finished_spans()
+    names = sorted(s.name for s in spans)
+    assert names == sorted([
+        "invoke_agent triage",
+        f"chat {MODEL}", f"chat {MODEL}",
+        "execute_tool lookup_customer", "execute_tool search_incidents",
+    ])
+
+    root = _spans()["invoke_agent triage"]
+    assert root.parent is None
+    assert root.attributes["gen_ai.operation.name"] == "invoke_agent"
+    assert root.attributes["triage.decision.category"] == "bug"
+    assert root.attributes["triage.turns"] == 2
+    assert root.status.status_code == StatusCode.UNSET
+
+    # every child hangs off the root, in the same trace
+    for s in spans:
+        if s is not root:
+            assert s.parent.span_id == root.context.span_id
+            assert s.context.trace_id == root.context.trace_id
+
+    chats = [s for s in spans if s.name.startswith("chat ")]
+    assert [s.attributes["gen_ai.response.finish_reasons"] for s in chats] == [("tool_use",), ("end_turn",)]
+    assert all(s.attributes["gen_ai.provider.name"] == "anthropic" for s in chats)
+    assert all(s.attributes["gen_ai.usage.input_tokens"] == 100 for s in chats)
+    assert all(s.attributes["gen_ai.response.model"] == "fake-model" for s in chats)
+
+    tool = _spans()["execute_tool lookup_customer"]
+    assert tool.attributes["gen_ai.tool.call.id"] == "toolu_A"
+    assert tool.attributes["triage.tool.is_error"] is False
+    # content is off by default: no arguments, no results on the span
+    assert "gen_ai.tool.call.arguments" not in tool.attributes
+    assert "gen_ai.tool.call.result" not in tool.attributes
+
+
+def test_content_capture_is_opt_in(monkeypatch):
+    monkeypatch.setenv("TRIAGE_OTEL_CAPTURE_CONTENT", "1")
+    first = response([tool_use_block("toolu_X", "lookup_customer", {"customer_id": "cust_404"})], "tool_use")
+    triage(TICKET, client=ScriptedClient([first, final_json(GOOD)]))
+    tool = _spans()["execute_tool lookup_customer"]
+    assert '"cust_404"' in tool.attributes["gen_ai.tool.call.arguments"]
+    assert "cust_404" in tool.attributes["gen_ai.tool.call.result"]
+    assert tool.status.status_code == StatusCode.ERROR  # tool returned is_error
+    assert "gen_ai.output.messages" in _spans()["invoke_agent triage"].attributes
+
+
+def test_failure_marks_the_root_span():
+    with pytest.raises(AgentError):
+        triage(TICKET, client=ScriptedClient([response([text_block("{")], "max_tokens")]))
+    root = _spans()["invoke_agent triage"]
+    assert root.status.status_code == StatusCode.ERROR
+    assert root.attributes["error.type"] == "truncated"
+```
+
+```bash
+python -m pytest tests/test_tracing.py -q     # 3 passed
+```
+
+**See it.** Console first, with the oracle so it costs nothing:
+
+```bash
+TRIAGE_OTEL_EXPORTER=console python eval.py --client oracle --workers 1 2>/dev/null | head -60
+```
+
+Each span prints as JSON with its `parent_id`, attributes, and status. Then a
+real backend. Jaeger v2 accepts OTLP directly and needs no config:
+
+```bash
+docker run --rm -d --name jaeger -p 16686:16686 -p 4318:4318 jaegertracing/jaeger:2.5.0
+export TRIAGE_OTEL_EXPORTER=otlp
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318     # http/protobuf; the exporter appends /v1/traces
+python eval.py --client oracle
+# open http://localhost:16686, service "triage-agent"
+```
+
+Any OTLP backend works the same way; a hosted one takes
+`OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer ..."` on top. The exporter
+reads both variables itself, so `configure()` never sees a key.
+
+> **Note:** The batch processor exports on a timer and on shutdown.
+> `configure()` registers `provider.shutdown` with `atexit`, so a short script
+> still flushes its last spans. Forget that and the final trace of every run
+> goes missing, which is a confusing bug to chase from the backend side.
+
+**Auto-instrumentation instead of hand-placed spans.** Two maintained
+packages patch the `anthropic` SDK so every `messages.create` produces a
+`chat` span without touching the loop: `opentelemetry-instrumentation-anthropic`
+(OpenLLMetry) and `openinference-instrumentation-anthropic` (Arize). Either is
+a fine way to get the `chat` spans; neither knows about your tools or your
+agent boundary, so `invoke_agent` and `execute_tool` are still yours to open.
+This repo places all three by hand so the whole tree is in one file you can
+read. One caveat from the SDK's own upgrade notes: `anthropic` 1.x is built
+on `httpx2`, so HTTP-level instrumentation that patches `httpx`
+(`HTTPXClientInstrumentor`) silently stops seeing SDK traffic unless
+`httpx2.alias_httpx()` runs before anything imports `httpx`. Span the SDK
+call, not the socket.
+
+> **Sidebar: the same signals from Claude Code itself**
+> The tool you built this with emits its own OpenTelemetry data, so the
+> development sessions can land in the same backend as the agent. Metrics
+> and events are stable; spans are behind a beta flag.
+>
+> ```bash
+> export CLAUDE_CODE_ENABLE_TELEMETRY=1
+> export OTEL_METRICS_EXPORTER=otlp
+> export OTEL_LOGS_EXPORTER=otlp
+> export OTEL_TRACES_EXPORTER=otlp                  # spans, beta
+> export CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1      # required for spans
+> export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+> export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+> claude
+> ```
+>
+> Spans: `claude_code.interaction` (root, per prompt), `claude_code.llm_request`,
+> `claude_code.tool` with children `claude_code.tool.blocked_on_user` and
+> `claude_code.tool.execution`, and `claude_code.hook`. Events:
+> `claude_code.api_request` (with `cost_usd`, `input_tokens`, `output_tokens`,
+> `cache_read_tokens`, `effort`), `claude_code.api_error`, `claude_code.api_refusal`,
+> `claude_code.tool_result` (`tool_name`, `tool_use_id`, `success`, `duration_ms`).
+> Metrics: `claude_code.token.usage`, `claude_code.cost.usage`,
+> `claude_code.session.count`, `claude_code.lines_of_code.count`. Prompt and
+> tool content are redacted unless `OTEL_LOG_USER_PROMPTS=1` /
+> `OTEL_LOG_TOOL_CONTENT=1`: the same opt-in shape as `TRIAGE_OTEL_CAPTURE_CONTENT`.
+> Notice the vocabulary matches the agent's: an LLM request span with token
+> counts, a tool span with the tool-use id and success flag. Once both are in
+> one backend, "how much did building this cost" and "how much does running
+> it cost" are the same query.
+
+> **Sidebar: Managed Agents**
+> When Anthropic runs the loop (Managed Agents), you do not instrument it;
+> you subscribe to the session's event stream. The `span.*` events
+> (`span.model_request_start`, `span.model_request_end`) and `agent.tool_use`
+> events carry the same shape as the spans above, and every persisted event
+> has a `processed_at` timestamp, so a bridge that turns that stream into OTLP
+> spans is a small consumer, not a rewrite of this part.
+
 ## Best Practices Reference
 
 | Practice | Why | Where in this repo |
@@ -1840,6 +2335,8 @@ one thing, re-run with the same reps, compare pass^k, keep or revert.
 | Reps and pass^k | Reliability, not just capability | `--reps`, `pass_pow_k` |
 | Transcript and usage per row | Debug a score without re-running; cost from real tokens | `results.jsonl` |
 | Introspect the SDK before writing a call | The API drifts faster than memory | Part 0 |
+| Instrument with the OTel API, configure the SDK at the entry point | No-op until a provider exists; tests use an in-memory exporter | `tracing.py`, `configure()` |
+| GenAI semantic conventions, content off by default | Backends understand the spans; customer text stays out unless opted in | `gen_ai.*` attributes, `TRIAGE_OTEL_CAPTURE_CONTENT` |
 
 ## The Drill
 
@@ -1847,7 +2344,7 @@ one thing, re-run with the same reps, compare pass^k, keep or revert.
 rm agent.py
 python -m pytest tests/test_loop.py -q      # ImportError across the board
 # rewrite agent.py from the four-move description in Part 3
-python -m pytest -q                         # 19 passed
+python -m pytest -q                         # 22 passed
 ```
 
 Things to be able to say without looking:
@@ -1860,6 +2357,7 @@ Things to be able to say without looking:
 6. What `tool_runner` does for you, and three reasons you would still write the loop.
 7. How tp/fp/fn are counted from one (expected, predicted) pair, and the formula for pass^k.
 8. Why errors get their own file instead of a zero.
+9. The three span names a traced agent run produces, and why the tool spans are siblings of the chat spans.
 
 ## Next Steps
 
@@ -1880,6 +2378,7 @@ Post seeds, each one an argument this repo can back with running code:
 4. *Prove the harness before you trust it.* The oracle run, the null run, and the planted failure: three offline checks that catch most eval bugs.
 5. *pass@k versus pass^k.* Capability versus reliability, and why unattended systems need the second number.
 6. *Let the SDK drive, until it can't.* `tool_runner` versus the manual loop, and the exact points where you drop down.
+7. *One vocabulary for building and running.* The agent's `chat` and `execute_tool` spans and Claude Code's `llm_request` and `tool` spans in one backend, and what it means that they line up.
 
 ## Appendix: API Details Verified While Building
 
@@ -1889,3 +2388,5 @@ Post seeds, each one an argument this repo can back with running code:
 - On Claude Fable 5.1, forced `tool_choice` (`any`, `tool`) returns a 400; `auto` plus a prompt instruction, with `strict: true` for argument shape, is the replacement. The `thinking` parameter is omitted (adaptive is the default on Claude Opus 5 and always-on on Claude Fable 5.1); `output_config.effort` controls depth.
 - `response.stop_details` is populated only when `stop_reason == "refusal"`; guard before reading.
 - The `anthropic` 1.x SDK is built on `httpx2`; `anthropic.APIConnectionError` and `anthropic.APIStatusError` are the two classes the loop catches, most specific first.
+- The GenAI semantic conventions (`gen_ai.*`) ship in `opentelemetry-semantic-conventions` under `_incubating`; `gen_ai.provider.name` (value `anthropic`) supersedes the older `gen_ai.system`. `GenAiOperationNameValues` includes `chat`, `invoke_agent`, and `execute_tool`.
+- Claude Code telemetry: `CLAUDE_CODE_ENABLE_TELEMETRY=1` plus `OTEL_METRICS_EXPORTER` / `OTEL_LOGS_EXPORTER` / `OTEL_TRACES_EXPORTER`; spans additionally need `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1`. Endpoint and headers use the standard `OTEL_EXPORTER_OTLP_*` variables.
